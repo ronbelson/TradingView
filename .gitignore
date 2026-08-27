@@ -1,0 +1,18 @@
+.DS_Store
+*.pyc
+__pycache__/
+.env
+.env.*
+!.env.example
+.claude-brief-cache.json
+paper_state.json
+
+# server (Next.js)
+server/node_modules
+server/.next
+server/out
+server/.vercel
+server/.data/*.json
+!server/.data/.gitkeep
+server/scripts/tws-bridge/logs/
+server/npm-debug.log*

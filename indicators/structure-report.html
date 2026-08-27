@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>כניסות ויציאות</title>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1017;
+      --card: #141b24;
+      --text: #eef3f8;
+      --muted: #8b97a8;
+      --green: #3ecf8e;
+      --red: #ff6b6b;
+      --line: #243041;
+      --blue: #7cb7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Heebo, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 18px 14px 48px;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .pill {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--blue);
+    }
+    .lvl {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .lvl:last-child { border-bottom: 0; }
+    .px { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .side-long { color: var(--green); }
+    .side-short { color: var(--red); }
+    .why { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+    }
+    @media (max-width: 640px) { .board { grid-template-columns: repeat(4, 1fr); } }
+    .cell {
+      border-radius: 10px;
+      padding: 8px 6px;
+      text-align: center;
+      border: 1px solid var(--line);
+      background: #0f1520;
+    }
+    .cell .tf { font-size: 11px; color: var(--muted); }
+    .cell .bub { font-size: 18px; font-weight: 800; margin: 2px 0; }
+    .cell.up .bub { color: var(--green); }
+    .cell.down .bub { color: var(--red); }
+    .err { color: var(--red); }
+    .ok { color: var(--green); }
+    .bad { color: var(--red); }
+    .trade {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .trade:last-child { border-bottom: 0; }
+    .trade .head { font-weight: 700; margin-bottom: 2px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>נקודות כניסה ויציאה</h1>
+    <div class="sub" id="sub">טוען…</div>
+    <div class="row" id="top"></div>
+
+    <div class="card">
+      <h2>יומן פייפר</h2>
+      <div class="row" id="paperStats"></div>
+      <div id="paperOpen" class="sub"></div>
+      <div id="paperTrades"></div>
+    </div>
+    <div class="card">
+      <h2>כניסות</h2>
+      <div id="entries"></div>
+    </div>
+    <div class="card">
+      <h2>יציאות / יעדים</h2>
+      <div id="exits"></div>
+    </div>
+    <div class="card">
+      <h2>מאבק הבא מטה</h2>
+      <div id="fightDn"></div>
+    </div>
+    <div class="card">
+      <h2>מאבק הבא מעלה</h2>
+      <div id="fightUp"></div>
+    </div>
+    <div class="card">
+      <h2>סטופים</h2>
+      <div id="stops"></div>
+    </div>
+    <div class="card">
+      <h2>לוח אותיות</h2>
+      <div class="board" id="board"></div>
+    </div>
+    <p class="sub"><a href="/">חזרה לשף</a> · רענון כל 20 שניות · פייפר בלבד</p>
+  </div>
+  <script>
+    function rowHtml(item, kind) {
+      const side = item.side || '';
+      let cls = '';
+      if (side.includes('לונג') || side.includes('מעלה')) cls = 'side-long';
+      if (side.includes('שורט') || side.includes('מטה')) cls = 'side-short';
+      return '<div class="lvl"><div><div class="' + cls + '">' + side +
+        (item.status ? ' · ' + item.status : '') +
+        '</div><div class="why">' + (item.why || '') + '</div></div>' +
+        '<div class="px">' + item.px + '</div></div>';
+    }
+    function renderPaper(p) {
+      if (!p) {
+        document.getElementById('paperOpen').textContent = 'אין יומן';
+        return;
+      }
+      const st = p.stats || {};
+      document.getElementById('paperStats').innerHTML =
+        '<div class="pill">נסגרו ' + (st.closed || 0) + '</div>' +
+        '<div class="pill ok">הצלחות ' + (st.wins || 0) + '</div>' +
+        '<div class="pill bad">כישלונות ' + (st.losses || 0) + '</div>' +
+        '<div class="pill">אחוז ' + (st.win_rate_pct != null ? st.win_rate_pct + '%' : '-') + '</div>' +
+        '<div class="pill">סיכום% ' + (st.pnl_pct_sum ?? 0) + '</div>';
+      const o = p.open;
+      if (o) {
+        const tgs = (o.targets || []).map(t => t.px || t).join(', ') || '-';
+        document.getElementById('paperOpen').innerHTML =
+          '<strong class="' + (o.side === 'long' ? 'ok' : 'bad') + '">פתוח: ' + (o.side_he || o.side) + '</strong>' +
+          ' · כניסה ' + o.entry +
+          ' · סטופ ' + o.stop +
+          ' · יעדים ' + tgs +
+          '<div class="why">' + (p.note || '') + '</div>';
+      } else {
+        document.getElementById('paperOpen').textContent = p.note || 'אין פוזיציה פתוחה';
+      }
+      const closed = (p.trades || []).filter(t => t.status === 'closed').slice().reverse();
+      document.getElementById('paperTrades').innerHTML = closed.length
+        ? closed.map(t => {
+            const cls = t.pnl_pct > 0 ? 'ok' : 'bad';
+            return '<div class="trade"><div class="head ' + cls + '">' +
+              (t.side_he || t.side) + ' · ' + (t.result_he || '') +
+              ' · ' + t.pnl_pct + '%</div>' +
+              '<div class="why">כניסה ' + t.entry + ' → יציאה ' + t.exit +
+              ' (' + (t.exit_kind === 'stop' ? 'סטופ' : t.exit_kind === 'target' ? 'יעד' : t.exit_kind) + ')' +
+              '</div></div>';
+          }).join('')
+        : '<div class="sub">עדיין אין עסקאות סגורות</div>';
+    }
+    async function load() {
+      const sub = document.getElementById('sub');
+      try {
+        const r = await fetch('/api/structure?t=' + Date.now(), { cache: 'no-store' });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        const lv = d.levels || {};
+        const when = d.receivedAt || '';
+        let ago = '';
+        if (when) {
+          const ms = Date.now() - new Date(when).getTime();
+          if (!Number.isNaN(ms) && ms >= 0) {
+            const sec = Math.floor(ms / 1000);
+            const min = Math.floor(sec / 60);
+            const hr = Math.floor(min / 60);
+            const day = Math.floor(hr / 24);
+            if (day >= 1) ago = 'לפני ' + day + ' ימים';
+            else if (hr >= 1) ago = 'לפני ' + hr + ' שעות' + (min % 60 ? ' ו־' + (min % 60) + ' דקות' : '');
+            else if (min >= 1) ago = 'לפני ' + min + ' דקות';
+            else ago = 'לפני רגע';
+          }
+        }
+        sub.textContent = 'מתי רץ לאחרונה: ' + (ago || '-') +
+          (when ? ' (' + when + ')' : '') +
+          ' · ' + (d.schema || '');
+        document.getElementById('top').innerHTML =
+          '<div class="pill">מחיר ' + d.price + '</div>' +
+          '<div class="pill">יום% ' + (d.dayPct ?? '-') + '</div>' +
+          '<div class="pill">' + (lv.summary_he || '') + '</div>';
+
+        renderPaper(d.paper);
+
+        document.getElementById('entries').innerHTML =
+          (lv.entries || []).map(e => rowHtml(e)).join('') || '<div class="sub">אין כניסה עכשיו</div>';
+        const exitMain = (lv.exits || []).filter(e => (e.side || '').includes('יציאת') || (e.side || '').includes('יעד'));
+        document.getElementById('exits').innerHTML =
+          exitMain.map(e => rowHtml(e)).join('') || '<div class="sub">אין</div>';
+        const fm = d.fights || {};
+        document.getElementById('fightDn').innerHTML =
+          (fm.fights_below || []).map(s => rowHtml({side: s.role, px: s.px, why: s.tf + ' · ' + (s.label || '')})).join('')
+          || '<div class="sub">אין</div>';
+        document.getElementById('fightUp').innerHTML =
+          (fm.fights_above || []).map(s => rowHtml({side: s.role, px: s.px, why: s.tf + ' · ' + (s.label || '')})).join('')
+          || '<div class="sub">אין</div>';
+        document.getElementById('stops').innerHTML =
+          (lv.stops || []).map(e => rowHtml(e)).join('') || '<div class="sub">אין</div>';
+
+        document.getElementById('board').innerHTML = (d.board || []).map(c => {
+          const cls = c.structure === 'up' ? 'up' : c.structure === 'down' ? 'down' : '';
+          return '<div class="cell ' + cls + '"><div class="tf">' + c.tf + '</div><div class="bub">' + c.bub + '</div></div>';
+        }).join('');
+      } catch (e) {
+        sub.innerHTML = '<span class="err">' + e.message + '</span>';
+      }
+    }
+    load();
+    setInterval(load, 20000);
+  </script>
+</body>
+</html>

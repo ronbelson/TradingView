@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC CHEF</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e13;
+      --card: #121820;
+      --text: #eef3f8;
+      --muted: #8b97a8;
+      --green: #3ecf8e;
+      --red: #ff6b6b;
+      --yellow: #f0c14b;
+      --line: #243041;
+      --blue: #7cb7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Heebo", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(900px 420px at 100% -10%, #1a2740 0%, transparent 55%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding: 16px 14px 48px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 400px; margin: 0 auto; }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .brand-left, .brand-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .brand-name {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .brand-price {
+      font-size: 18px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--blue);
+      letter-spacing: -0.02em;
+    }
+    .chef {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      border: 1px solid #30363d;
+      display: block;
+      flex-shrink: 0;
+    }
+    .btc {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .updated {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .trade-box {
+      background: rgba(18, 24, 32, 0.96);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .trade-box .k {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .tf-pick {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 8px;
+    }
+    .tf-pick button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #0f141c;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 6px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tf-pick button.on {
+      border-color: var(--blue);
+      color: var(--blue);
+      background: rgba(124, 183, 255, 0.12);
+    }
+    .tf-pick button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+    .card {
+      background: rgba(18, 24, 32, 0.96);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+    }
+    .odds-row {
+      display: grid;
+      grid-template-columns: 58px 1fr 42px;
+      gap: 8px;
+      align-items: center;
+      margin: 9px 0;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .odds-row:first-of-type { margin-top: 0; }
+    .odds-track {
+      height: 9px;
+      border-radius: 999px;
+      background: #1a222d;
+      overflow: hidden;
+      direction: ltr;
+    }
+    .odds-fill { display: block; height: 100%; border-radius: 999px; }
+    .odds-fill.u { background: var(--green); }
+    .odds-fill.d { background: var(--red); }
+    .odds-fill.c { background: var(--yellow); }
+    .do {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--yellow);
+      margin: 0 0 10px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .state {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      background: #243018;
+      color: var(--yellow);
+      border: 1px solid #3d4f22;
+    }
+    .state.in { background: #163528; color: var(--green); border-color: #2a5a40; }
+    .state.out { background: #3a1d1d; color: var(--red); border-color: #5a2a2a; }
+    .facts { margin: 0; padding: 0; list-style: none; }
+    .facts li {
+      font-size: 15px;
+      font-weight: 500;
+      padding: 7px 0;
+      border-bottom: 1px solid #1c2633;
+    }
+    .facts li:last-child { border-bottom: 0; }
+    .wait-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: #18202a;
+      border: 1px solid #2a3648;
+    }
+    .wait-box .k {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .wait-box .v { font-size: 15px; font-weight: 700; line-height: 1.35; }
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .two .cell {
+      background: #151c26;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .two .k { color: var(--muted); font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+    .source { margin-top: 10px; color: var(--muted); font-size: 11px; font-weight: 500; }
+    .source.claude { color: #7cb7ff; }
+    .chart-wrap { direction: ltr; }
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .dotl::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+    .dotl.up::before { background: var(--green); }
+    .dotl.dn::before { background: var(--red); }
+    .dotl.now::before { background: var(--yellow); }
+    .dotl.entry::before { background: var(--blue); }
+    .rail { position: relative; padding: 2px 0 2px 16px; }
+    .rail::before {
+      content: "";
+      position: absolute;
+      left: 5px;
+      top: 10px;
+      bottom: 10px;
+      width: 2px;
+      background: linear-gradient(to bottom, var(--green), var(--yellow), var(--red));
+    }
+    .row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 86px;
+      gap: 8px;
+      padding: 9px 0;
+      border-bottom: 1px dashed #1e2834;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row::before {
+      content: "";
+      position: absolute;
+      left: -14px;
+      top: 15px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #5a6a7e;
+    }
+    .row.up::before { background: var(--green); }
+    .row.down::before { background: var(--red); }
+    .row.now {
+      background: #243018;
+      border: 1px solid #3d4f22;
+      border-radius: 10px;
+      padding: 10px 8px;
+      margin: 4px 0;
+      border-bottom: 0;
+      font-weight: 800;
+      color: var(--yellow);
+    }
+    .row.now::before { background: var(--yellow); }
+    .row.key { background: #1a2230; border-radius: 10px; padding: 9px 8px; margin: 2px 0; }
+    .meta { color: var(--muted); font-size: 11px; margin-top: 2px; font-weight: 500; }
+    .nums { font-variant-numeric: tabular-nums; font-weight: 800; text-align: left; }
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .tf {
+      display: grid;
+      grid-template-columns: 72px 1fr 52px;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .tf:last-child { border-bottom: 0; }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-left: 5px;
+    }
+    details.card { padding: 0; overflow: hidden; }
+    details.card summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      user-select: none;
+    }
+    details.card summary::-webkit-details-marker { display: none; }
+    details.card .body { padding: 0 16px 16px; }
+    .pm {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 700;
+      background: #1a2330;
+      flex-shrink: 0;
+    }
+    details.card[open] .pm::before { content: "−"; }
+    details.card:not([open]) .pm::before { content: "+"; }
+    .err { color: var(--red); font-size: 13px; margin-bottom: 8px; }
+    .help p { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="brand">
+      <div class="brand-left">
+        <img class="chef" src="/chef-icon.svg?v=2" alt="" width="32" height="32" />
+        <div class="brand-name">BTC CHEF</div>
+      </div>
+      <div class="brand-right">
+        <svg class="btc" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="15" fill="#f7931a"/>
+          <text x="16" y="21" text-anchor="middle" font-size="14" font-weight="800" fill="#fff" font-family="Heebo,sans-serif">₿</text>
+        </svg>
+        <div class="brand-price" id="pxMid">—</div>
+      </div>
+    </header>
+    <div class="updated" id="updated">מתעדכן…</div>
+    <div class="updated"><a href="/report" style="color:#7cb7ff">רפורט מבנה ותחנות</a></div>
+    <div class="trade-box">
+      <div class="k">אני סוחר ב</div>
+      <div class="tf-pick" id="tfPick">
+        <button type="button" data-tf="15m">15 דק׳</button>
+        <button type="button" data-tf="30m">30 דק׳</button>
+        <button type="button" data-tf="1H">שעה</button>
+        <button type="button" data-tf="4H">4 שעות</button>
+      </div>
+    </div>
+    <div id="err" class="err" hidden></div>
+    <div id="app"></div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let lastSig = "";
+    let openTf = false;
+    let openMore = false;
+    let openHelp = false;
+    let lastLiveAt = null;
+    let lastStoryAt = null;
+    let tradeTf = localStorage.getItem("btc_chef_trade_tf") || "4H";
+    let loadingClaude = false;
+
+    function paintTradePick() {
+      for (const btn of document.querySelectorAll("#tfPick button")) {
+        btn.classList.toggle("on", btn.dataset.tf === tradeTf);
+        btn.disabled = loadingClaude;
+      }
+    }
+
+    function setTradeTf(tf) {
+      if (!tf || tf === tradeTf) return;
+      tradeTf = tf;
+      localStorage.setItem("btc_chef_trade_tf", tradeTf);
+      paintTradePick();
+      load({ force: true });
+    }
+
+    $("tfPick").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-tf]");
+      if (!btn || loadingClaude) return;
+      setTradeTf(btn.dataset.tf);
+    });
+    paintTradePick();
+
+    function fmt(n) {
+      if (n == null || n === "") return "—";
+      const v = Number(n);
+      if (!Number.isFinite(v)) return String(n);
+      return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    }
+    function colorName(c) {
+      if (c === "green") return "ירוק";
+      if (c === "red") return "אדום";
+      return "צהוב";
+    }
+    function colorHex(c) {
+      if (c === "green") return "#3ecf8e";
+      if (c === "red") return "#ff6b6b";
+      return "#f0c14b";
+    }
+    function toMs(isoOrTs) {
+      if (isoOrTs == null || isoOrTs === "") return null;
+      if (typeof isoOrTs === "number") {
+        return isoOrTs > 1e12 ? isoOrTs : isoOrTs * 1000;
+      }
+      const d = new Date(isoOrTs);
+      const ms = d.getTime();
+      return Number.isNaN(ms) ? null : ms;
+    }
+    function agoHe(isoOrTs) {
+      const ms = toMs(isoOrTs);
+      if (ms == null) return "לא ידוע";
+      const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (sec < 5) return "עכשיו";
+      if (sec < 60) return `לפני ${sec} שניות`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `לפני ${min} דקות`;
+      const hr = Math.floor(min / 60);
+      return `לפני ${hr} שעות`;
+    }
+    function paintUpdated() {
+      const dataPart = lastLiveAt == null ? "נתונים…" : `נתונים ${agoHe(lastLiveAt)}`;
+      const viewPart = lastStoryAt == null ? "תצוגה מוכנה…" : `תצוגה מוכנה ${agoHe(lastStoryAt)}`;
+      $("updated").textContent = `${dataPart} · ${viewPart}`;
+    }
+    function rememberOpen() {
+      openTf = !!(document.getElementById("detTf") || {}).open;
+      openMore = !!(document.getElementById("detMore") || {}).open;
+      openHelp = !!(document.getElementById("detHelp") || {}).open;
+    }
+
+    function entryState(brief) {
+      const now = Number(brief.now_px);
+      const conf = Number(brief.confirm_px);
+      const cancel = Number(brief.cancel_px);
+      if (!Number.isFinite(now) || !Number.isFinite(conf)) {
+        return { key: "wait", he: "מחוץ לכניסה · ממתינים" };
+      }
+      if (now >= conf) return { key: "in", he: "מעל קו האישור · בתוך אזור כניסה" };
+      if (Number.isFinite(cancel) && now <= cancel) return { key: "out", he: "מתחת לתמיכה · היציאה נשברה" };
+      return { key: "wait", he: "מתחת לאישור · עוד לא נכנסו" };
+    }
+
+    function miniChart(brief) {
+      const rows = (brief.tiny_ladder || []).slice();
+      if (!rows.length) return "";
+      const prices = rows.map((r) => Number(r.px)).filter(Number.isFinite);
+      const now = Number(brief.now_px);
+      const conf = Number(brief.confirm_px);
+      const cancel = Number(brief.cancel_px);
+      if (Number.isFinite(now)) prices.push(now);
+      if (Number.isFinite(conf)) prices.push(conf);
+      if (Number.isFinite(cancel)) prices.push(cancel);
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const span = Math.max(max - min, 1);
+      const W = 340, H = 180, pad = 18;
+      const yOf = (px) => pad + (1 - (px - min) / span) * (H - pad * 2);
+      const sorted = [...rows].sort((a, b) => Number(b.px) - Number(a.px));
+      let marks = "";
+      sorted.forEach((r, i) => {
+        const y = yOf(Number(r.px));
+        const x = 40 + (i % 5) * 12;
+        const col = r.side === "up" ? "#3ecf8e" : r.side === "down" ? "#ff6b6b" : "#f0c14b";
+        marks += `<circle cx="${W - 28}" cy="${y}" r="4" fill="${col}" /><text x="${W - 36}" y="${y + 4}" text-anchor="end" fill="#8b97a8" font-size="10">${fmt(r.px)}</text>`;
+      });
+      const yNow = yOf(now);
+      const yConf = Number.isFinite(conf) ? yOf(conf) : null;
+      const yCancel = Number.isFinite(cancel) ? yOf(cancel) : null;
+      let lines = "";
+      if (yConf != null) lines += `<line x1="24" y1="${yConf}" x2="${W - 24}" y2="${yConf}" stroke="#7cb7ff" stroke-dasharray="4 4" stroke-width="1.5" />`;
+      if (yCancel != null) lines += `<line x1="24" y1="${yCancel}" x2="${W - 24}" y2="${yCancel}" stroke="#ff6b6b" stroke-dasharray="4 4" stroke-width="1.5" />`;
+      lines += `<line x1="24" y1="${yNow}" x2="${W - 24}" y2="${yNow}" stroke="#f0c14b" stroke-width="2" />`;
+      lines += `<circle cx="48" cy="${yNow}" r="6" fill="#f0c14b" stroke="#0a0e13" stroke-width="2" />`;
+      if (yConf != null) lines += `<circle cx="72" cy="${yConf}" r="5" fill="#7cb7ff" />`;
+      return `
+        <div class="chart-wrap">
+          <svg viewBox="0 0 ${W} ${H}" width="100%" height="180" role="img" aria-label="סולם מחירים">
+            <rect x="0" y="0" width="${W}" height="${H}" rx="12" fill="#151c26"/>
+            ${marks}
+            ${lines}
+          </svg>
+          <div class="chart-legend">
+            <span class="dotl now">עכשיו</span>
+            <span class="dotl entry">אישור כניסה</span>
+            <span class="dotl up">למעלה</span>
+            <span class="dotl dn">למטה / יציאה</span>
+          </div>
+        </div>`;
+    }
+
+    function render(brief) {
+      rememberOpen();
+      const odds = brief.odds || {};
+      const up = Number(odds.up || 0);
+      const dn = Number(odds.down || 0);
+      const wt = Number(odds.wait || 0);
+      $("pxMid").textContent = fmt(brief.now_px);
+      lastLiveAt = brief.data_fetched_at != null ? brief.data_fetched_at : brief.as_of;
+      lastStoryAt = brief.story_updated_at != null ? brief.story_updated_at : brief.data_fetched_at;
+      paintUpdated();
+
+      const st = entryState(brief);
+      const facts = (brief.why_he || []).map((w) => `<li>${w}</li>`).join("");
+
+      let rail = "";
+      for (const row of brief.tiny_ladder || []) {
+        const side = row.side === "now" ? "now" : row.side;
+        const key = row.tag_he === "קו פריצה" || row.tag_he === "מדף אפור" || row.tag_he === "צהוב למטה" ? " key" : "";
+        rail += `
+          <div class="row ${side}${key}">
+            <div>
+              <div>${row.name_he}</div>
+              <div class="meta">${row.tag_he || ""}</div>
+            </div>
+            <div class="nums ${side === "up" ? "good" : side === "down" ? "bad" : ""}">${fmt(row.px)}</div>
+          </div>`;
+      }
+
+      let tfHtml = "";
+      for (const row of brief.tf_progress || []) {
+        tfHtml += `<div class="tf"><span>${row.tf_he || ""}</span><span>${row.text_he || ""}</span><span><i class="dot" style="background:${colorHex(row.color)}"></i>${colorName(row.color)}</span></div>`;
+      }
+
+      const cuts = brief.cuts || {};
+      const full = brief.full_ladder || {};
+      const fullUp = ((full.ladder || {}).up || []).map((x) =>
+        `<div class="row up"><div>${x.label_he || ""}</div><div class="nums good">${fmt(x.px)}</div></div>`
+      ).join("");
+      const fullDn = ((full.ladder || {}).down || []).map((x) =>
+        `<div class="row down"><div>${x.label_he || ""}</div><div class="nums bad">${fmt(x.px)}</div></div>`
+      ).join("");
+      const src = brief.copy_source || "";
+      const srcClass = src.includes("claude") ? (src.includes("cache") ? "cache" : "claude") : "template";
+      const tradeHe = brief.trade_tf_he || "";
+
+      $("app").innerHTML = `
+        <div class="card">
+          <div class="odds-row"><span>עלייה</span><div class="odds-track"><span class="odds-fill u" style="width:${up}%"></span></div><span class="nums">${up}%</span></div>
+          <div class="odds-row"><span>ירידה</span><div class="odds-track"><span class="odds-fill d" style="width:${dn}%"></span></div><span class="nums">${dn}%</span></div>
+          <div class="odds-row"><span>המתנה</span><div class="odds-track"><span class="odds-fill c" style="width:${wt}%"></span></div><span class="nums">${wt}%</span></div>
+        </div>
+
+        <div class="card">
+          <div class="state ${st.key}">${st.he}</div>
+          <div class="muted" style="margin:0 0 8px;font-size:12px;font-weight:600">מסקנות תזמון ל${tradeHe}${brief.side_he ? " · " + brief.side_he : ""}</div>
+          <div class="muted" style="margin:0 0 10px;font-size:11px;line-height:1.45">תזמון = ${tradeHe}. קווי מבנה = 4 שעות (צהוב / אפור ורוד / תמיכה).</div>
+          <div class="do">${brief.do_he || "—"}</div>
+          ${brief.missed_path_he ? `<div class="wait-box" style="margin-top:10px"><div class="k">מה פיספסנו</div><div class="v">${brief.missed_path_he}</div></div>` : ""}
+          ${brief.now_path_he ? `<div class="wait-box" style="margin-top:10px"><div class="k">מה עכשיו</div><div class="v">${brief.now_path_he}</div></div>` : ""}
+          <ul class="facts">${facts}</ul>
+          <div class="wait-box">
+            <div class="k">מחכים למה · הפרדה בין הצדדים</div>
+            <div class="v">${brief.wait_for_he || "—"}</div>
+          </div>
+          <div class="two">
+            <div class="cell"><div class="k">תנאי לונג · מבנה 4 שעות</div><div class="nums good">${fmt(brief.confirm_px)}</div><div class="muted" style="margin-top:4px;font-size:11px">${brief.confirm_source_he || "צהוב אמצע ב־4 שעות"}</div></div>
+            <div class="cell"><div class="k">נקודת שורט · מבנה 4 שעות</div><div class="nums bad">${fmt(brief.cancel_px)}</div><div class="muted" style="margin-top:4px;font-size:11px">${brief.cancel_source_he || "פיווט נמוך ב־4 שעות"}</div></div>
+          </div>
+          <div class="wait-box" style="margin-top:10px">
+            <div class="k">למה תנאי הלונג · מבנה 4 שעות</div>
+            <div class="v">${brief.why_confirm_he || "מההוק: צהוב אמצע ב־4 שעות"}</div>
+          </div>
+          <div class="source ${srcClass}">${brief.note_he || ""}</div>
+        </div>
+
+        <div class="card">
+          ${miniChart(brief)}
+        </div>
+
+        <div class="card">
+          <div class="rail">${rail}</div>
+        </div>
+
+        <details class="card" id="detHelp" ${openHelp ? "open" : ""}>
+          <summary><span>מה המצבים</span><span class="pm" aria-hidden="true"></span></summary>
+          <div class="body help">
+            <p>עוד לא נכנסו: המחיר מתחת לקו האישור.</p>
+            <p>בתוך אזור כניסה: המחיר מעל קו האישור.</p>
+            <p>נשבר למטה: המחיר מתחת לתמיכה. הסיפור של העלייה נכשל.</p>
+            <p>בועות בגרף הגדול: שיא חדש, שיא נמוך, תחתית גבוהה, תחתית חדשה. זה היסטוריית כיוון. לא כפתור כניסה.</p>
+          </div>
+        </details>
+
+        <details class="card" id="detTf" ${openTf ? "open" : ""}>
+          <summary><span>פסי הזמן</span><span class="pm" aria-hidden="true"></span></summary>
+          <div class="body">${tfHtml || '<div class="muted">אין</div>'}</div>
+        </details>
+
+        <details class="card" id="detMore" ${openMore ? "open" : ""}>
+          <summary><span>פרטים נוספים</span><span class="pm" aria-hidden="true"></span></summary>
+          <div class="body">
+            <div class="muted" style="margin-bottom:8px">ניסיונות על ${fmt(cuts.level_px)} · נדחו אחרי חיתוך ${cuts.reject_after_cross_count || 0}</div>
+            <div class="rail">${fullUp}<div class="row now"><div>עכשיו</div><div class="nums">${fmt(brief.now_px)}</div></div>${fullDn}</div>
+          </div>
+        </details>
+      `;
+    }
+
+    function sigOf(d) {
+      const o = d.odds || {};
+      const c = d.cuts || {};
+      return [d.as_of || "", d.now_px, o.up, o.down, o.wait, c.reject_after_cross_count, d.copy_source, d.do_he, d.story_updated_at, d.trade_tf].join("|");
+    }
+
+    async function load(opts) {
+      const force = !!(opts && opts.force);
+      if (force) {
+        loadingClaude = true;
+        paintTradePick();
+      }
+      try {
+        const url = `/api/brief?trade_tf=${encodeURIComponent(tradeTf)}${force ? "&force=1" : ""}`;
+        const r = await fetch(url, { cache: "no-store" });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+        if (d.trade_tf) tradeTf = d.trade_tf;
+        const sig = sigOf(d);
+        if (!force && sig === lastSig) return;
+        lastSig = sig;
+        $("err").hidden = true;
+        render(d);
+        paintTradePick();
+      } catch (e) {
+        $("err").hidden = false;
+        $("err").textContent = String(e.message || e);
+      } finally {
+        if (force) {
+          loadingClaude = false;
+          paintTradePick();
+        }
+      }
+    }
+
+    load({ force: false }).then(() => {
+      setTimeout(() => load({ force: true }), 500);
+    });
+    setInterval(() => load({ force: false }), 5000);
+    setInterval(paintUpdated, 1000);
+  </script>
+</body>
+</html>

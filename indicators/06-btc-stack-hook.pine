@@ -1,0 +1,815 @@
+//@version=6
+indicator("BTC Stack Hook", overlay=true, max_labels_count=50, max_bars_back=500, max_lines_count=100)
+// facts_v8_meter = v7 + meter parity TFs (2m/5m/10m/6H/12H) + dayPct + board strip
+// Defaults aligned with BTC Stack Meter (bubble RSI3 · RSI4 · pivot 12/3 · MACD 8/21/5)
+// Alert: condition = Any alert() function call · 1m · webhook URL
+// Hybrid: bubble/letter fire mid-bar (once_per_bar) · price-only fire on bar close
+
+type TfPack
+    string name
+    float c
+    float mf
+    float mm
+    float ms
+    float mx
+    float lf
+    float lm
+    float ls
+    float dp
+    float r14
+    float r7
+    float ml
+    float sl
+    float hi
+    float rh
+    float rl
+    float rp
+    float stk
+    float pvs
+    float fl
+    string bub
+    float bubPx
+    float ph
+    float ph2
+    float pl
+    float pl2
+    float srh
+    float srl
+    float zc
+    float pc
+    float ch
+    float vr
+    float gaLo
+    float gaHi
+    float gbLo
+    float gbHi
+    float oppPx
+    float swingPct
+    float bubAge
+    float lastHiPx
+    float lastLoPx
+    float poc
+    float zvALo
+    float zvAHi
+    float zvBLo
+    float zvBHi
+    float deltaPct
+
+gReg = "Market regime"
+isBull = input.bool(false, "Bull market", group=gReg)
+
+gMaW = "Week"
+wFastLen = input.int(20, "Fast EMA", minval=1, group=gMaW)
+wSlowLen = input.int(200, "Slow SMA", minval=1, group=gMaW)
+wXLen = input.int(300, "Extra SMA", minval=1, group=gMaW)
+
+gMa3D = "3D"
+d3FastLen = input.int(9, "Fast EMA", minval=1, group=gMa3D)
+d3MidLen = input.int(21, "Mid EMA", minval=1, group=gMa3D)
+d3SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa3D)
+
+gMaD = "Day"
+dFastLen = input.int(9, "Fast EMA", minval=1, group=gMaD)
+dMidLen = input.int(20, "Mid EMA", minval=1, group=gMaD)
+dSlowLen = input.int(50, "Slow EMA", minval=1, group=gMaD)
+dXLen = input.int(200, "Extra SMA", minval=1, group=gMaD)
+
+gMa4H = "4H"
+h4FastLen = input.int(10, "Fast EMA", minval=1, group=gMa4H)
+h4MidLen = input.int(50, "Mid EMA", minval=1, group=gMa4H)
+h4SlowLen = input.int(200, "Slow SMA", minval=1, group=gMa4H)
+
+gMa1H = "1H"
+h1FastLen = input.int(9, "Fast EMA", minval=1, group=gMa1H)
+h1MidLen = input.int(20, "Mid EMA", minval=1, group=gMa1H)
+h1SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa1H)
+
+gMa30 = "30m"
+m30FastLen = input.int(9, "Fast EMA", minval=1, group=gMa30)
+m30MidLen = input.int(20, "Mid EMA", minval=1, group=gMa30)
+m30SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa30)
+
+gMa15 = "15m"
+m15FastLen = input.int(9, "Fast EMA", minval=1, group=gMa15)
+m15SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa15)
+
+gMaO = "Other TF"
+oFastLen = input.int(9, "Fast EMA", minval=1, group=gMaO)
+oMidLen = input.int(20, "Mid EMA", minval=1, group=gMaO)
+oSlowLen = input.int(50, "Slow EMA", minval=1, group=gMaO)
+
+gSnap = "Snap"
+largePivotLen = input.int(12, "Large pivot", minval=1, maxval=50, group=gSnap)
+smallPivotLen = input.int(3, "Small pivot", minval=1, maxval=20, group=gSnap)
+// Bubble RSI length default = 3 (same as Meter). Separate RSI default = 4.
+rsiLen = input.int(3, "Bubble RSI len (=3)", minval=1, group=gSnap, tooltip="Default = 3. Same as Meter. Same length on every TF.")
+rsiOB = input.int(70, "Overbought", minval=51, maxval=100, group=gSnap)
+rsiOS = input.int(30, "Oversold", minval=1, maxval=49, group=gSnap)
+rsi14Len = input.int(4, "RSI Length (=4)", minval=1, group=gSnap, tooltip="Separate RSI (r14). Default = 4. Same as Meter.")
+macdFast = input.int(8, "MACD fast", minval=1, group=gSnap)
+macdSlow = input.int(21, "MACD slow", minval=1, group=gSnap)
+macdSig = input.int(5, "MACD signal", minval=1, group=gSnap)
+
+gPaint = "Paint (Zap / Pink / Channel)"
+zapFollowLen = input.int(50, "Zap follow EMA", minval=1, group=gPaint)
+zapMacdFast = input.int(12, "Zap MACD fast", minval=1, group=gPaint)
+zapMacdSlow = input.int(26, "Zap MACD slow", minval=1, group=gPaint)
+zapMacdSig = input.int(9, "Zap MACD signal", minval=1, group=gPaint)
+pinkFast = input.int(20, "Pink SMA fast", minval=1, group=gPaint)
+pinkMid = input.int(50, "Pink SMA mid", minval=1, group=gPaint)
+pinkSlow = input.int(100, "Pink SMA slow", minval=1, group=gPaint)
+pinkChannelLen = input.int(33, "Channel SMMA", minval=1, group=gPaint)
+pinkPriceAvgLen = input.int(5, "Channel price avg", minval=1, group=gPaint)
+volMaLen = input.int(20, "Volume MA", minval=1, group=gPaint)
+
+gDay = "Day %"
+dayTf = input.timeframe("D", "Day timeframe", group=gDay, tooltip="Day open for % vs 0. Same as Meter.")
+
+gVol = "Volume profile (15m / 30m / 1H / 4H)"
+vpLookback = input.int(20, "VP lookback", minval=12, maxval=32, group=gVol)
+vpBins = input.int(8, "VP bins", minval=6, maxval=10, group=gVol)
+
+gHook = "Webhook"
+enableHook = input.bool(true, "Alert() facts_v8 JSON", group=gHook)
+fireOnPxUpdate = input.bool(true, "Also fire when bubble price moves", group=gHook)
+hybridUrgent = input.bool(true, "Bubble/letter fire immediately (hybrid)", group=gHook)
+showFireMark = input.bool(false, "Show fire mark on chart", group=gHook)
+
+f_lineY(prevI, prevP, lastI, lastP, atI) =>
+    float y = na
+    if not na(prevP) and not na(lastP) and not na(prevI) and not na(lastI) and lastI != prevI
+        y := prevP + (lastP - prevP) * (atI - prevI) / (lastI - prevI)
+    y
+
+// Tiny VP — called only via 3 securities (15/30/60), never on 1m chart path.
+f_vpOnly() =>
+    int lb = vpLookback
+    int bins = vpBins
+    float hiR = ta.highest(high, lb)
+    float loR = ta.lowest(low, lb)
+    float span = hiR - loR
+    float poc = na
+    float zvALo = na
+    float zvAHi = na
+    float zvBLo = na
+    float zvBHi = na
+    float dlt = 0.0
+    if span > 0 and bins > 1
+        vols = array.new_float(bins, 0.0)
+        for i = 0 to lb - 1
+            float src = hlc3[i]
+            int bi = int(math.min(bins - 1, math.max(0, math.floor((src - loR) / span * bins))))
+            array.set(vols, bi, array.get(vols, bi) + nz(volume[i], 0.0))
+        float maxV = 0.0
+        int maxI = 0
+        for bi = 0 to bins - 1
+            float v = array.get(vols, bi)
+            if v > maxV
+                maxV := v
+                maxI := bi
+        float step = span / bins
+        poc := loR + (maxI + 0.5) * step
+        int cBin = int(math.min(bins - 1, math.max(0, math.floor((close - loR) / span * bins))))
+        dlt := 0.0
+        if cBin < bins - 1
+            for bi = cBin + 1 to bins - 1
+                if array.get(vols, bi) <= 0
+                    zvALo := loR + bi * step
+                    zvAHi := loR + (bi + 1) * step
+                    break
+        if cBin > 0
+            for bi = cBin - 1 to 0
+                if array.get(vols, bi) <= 0
+                    zvBLo := loR + bi * step
+                    zvBHi := loR + (bi + 1) * step
+                    break
+    [poc, zvALo, zvAHi, zvBLo, zvBHi, dlt]
+
+f_tfFacts() =>
+    int lf = na
+    int lm = na
+    int ls = na
+    int lx = na
+    int tf = 0
+    int tm = 0
+    int ts = 0
+    int tx = 0
+    if timeframe.isweekly
+        lf := wFastLen
+        tf := 1
+        ls := wSlowLen
+        ts := 2
+        lx := wXLen
+        tx := 2
+    else if timeframe.period == "3D"
+        lf := d3FastLen
+        tf := 1
+        lm := d3MidLen
+        tm := 1
+        ls := d3SlowLen
+        ts := 2
+    else if timeframe.isdaily
+        lf := dFastLen
+        tf := 1
+        lm := dMidLen
+        tm := 1
+        ls := dSlowLen
+        ts := 1
+        lx := dXLen
+        tx := 2
+    else if timeframe.period == "240"
+        lf := h4FastLen
+        tf := 1
+        lm := h4MidLen
+        tm := 1
+        ls := h4SlowLen
+        ts := 2
+    else if timeframe.period == "60"
+        lf := h1FastLen
+        tf := 1
+        lm := h1MidLen
+        tm := 1
+        ls := h1SlowLen
+        ts := 1
+    else if timeframe.period == "30"
+        lf := m30FastLen
+        tf := 1
+        lm := m30MidLen
+        tm := 1
+        ls := m30SlowLen
+        ts := 1
+    else if timeframe.period == "15"
+        lf := m15FastLen
+        tf := 1
+        lm := oMidLen
+        tm := 1
+        ls := m15SlowLen
+        ts := 1
+    else
+        lf := oFastLen
+        tf := 1
+        lm := oMidLen
+        tm := 1
+        ls := oSlowLen
+        ts := 1
+
+    float eFast = ta.ema(close, nz(lf, 1))
+    float sFast = ta.sma(close, nz(lf, 1))
+    float eMid = ta.ema(close, nz(lm, 1))
+    float sMid = ta.sma(close, nz(lm, 1))
+    float eSlow = ta.ema(close, nz(ls, 1))
+    float sSlow = ta.sma(close, nz(ls, 1))
+    float eX = ta.ema(close, nz(lx, 1))
+    float sX = ta.sma(close, nz(lx, 1))
+    float mFast = not na(lf) and tf != 0 ? (tf == 1 ? eFast : sFast) : na
+    float mMid = not na(lm) and tm != 0 ? (tm == 1 ? eMid : sMid) : na
+    float slowL = not na(ls) and ts != 0 ? (ts == 1 ? eSlow : sSlow) : na
+    float mX = not na(lx) and tx != 0 ? (tx == 1 ? eX : sX) : na
+    bool abv = not na(slowL) and close > slowL
+    float distPct = not na(slowL) and slowL != 0 ? (close - slowL) / slowL * 100.0 : 0.0
+    bool stkBull = not na(mFast) and (na(mMid) or mFast > mMid) and not na(slowL) and (na(mMid) ? mFast > slowL : mMid > slowL)
+    bool stkBear = not na(mFast) and (na(mMid) or mFast < mMid) and not na(slowL) and (na(mMid) ? mFast < slowL : mMid < slowL)
+
+    float r14 = ta.rsi(close, rsi14Len)
+    [ml, sl, hi] = ta.macd(close, macdFast, macdSlow, macdSig)
+    bool mAbove = ml > sl
+    bool hRise = hi > hi[1]
+    bool hFall = hi < hi[1]
+    bool bothLo = ml < 0 and sl < 0
+    bool bothHi = ml > 0 and sl > 0
+    bool crossUp = ta.crossover(ml, sl)
+    bool crossDn = ta.crossunder(ml, sl)
+
+    ph = ta.pivothigh(high, largePivotLen, largePivotLen)
+    pl = ta.pivotlow(low, largePivotLen, largePivotLen)
+    var float pHi = na
+    var float pHi2 = na
+    var int iHi = na
+    var int iHi2 = na
+    var float pLo = na
+    var float pLo2 = na
+    var int iLo = na
+    var int iLo2 = na
+    if not na(ph)
+        pHi2 := pHi
+        iHi2 := iHi
+        pHi := ph
+        iHi := bar_index - largePivotLen
+    if not na(pl)
+        pLo2 := pLo
+        iLo2 := iLo
+        pLo := pl
+        iLo := bar_index - largePivotLen
+    hiY = f_lineY(iHi2, pHi2, iHi, pHi, bar_index)
+    loY = f_lineY(iLo2, pLo2, iLo, pLo, bar_index)
+    float railPos = na
+    float railUp = na
+    float railDn = na
+    string priceVsRails = "none"
+    if not na(hiY) and not na(loY)
+        railUp := math.max(hiY, loY)
+        railDn := math.min(hiY, loY)
+        span = railUp - railDn
+        railPos := span != 0 ? (close - railDn) / span : 0.5
+        priceVsRails := close > railUp ? "above_upper" : close < railDn ? "below_lower" : "inside"
+    else if not na(loY) and close <= loY * 1.002
+        railDn := loY
+        priceVsRails := "at_lower"
+    else if not na(hiY) and close >= hiY * 0.998
+        railUp := hiY
+        priceVsRails := "at_upper"
+
+    sph = ta.pivothigh(high, smallPivotLen, smallPivotLen)
+    spl = ta.pivotlow(low, smallPivotLen, smallPivotLen)
+    var float spHi = na
+    var float spHi2 = na
+    var int siHi = na
+    var int siHi2 = na
+    var float spLo = na
+    var float spLo2 = na
+    var int siLo = na
+    var int siLo2 = na
+    if not na(sph)
+        spHi2 := spHi
+        siHi2 := siHi
+        spHi := sph
+        siHi := bar_index - smallPivotLen
+    if not na(spl)
+        spLo2 := spLo
+        siLo2 := siLo
+        spLo := spl
+        siLo := bar_index - smallPivotLen
+    sHiY = f_lineY(siHi2, spHi2, siHi, spHi, bar_index)
+    sLoY = f_lineY(siLo2, spLo2, siLo, spLo, bar_index)
+    float smallUp = na
+    float smallDn = na
+    if not na(sHiY) and not na(sLoY)
+        smallUp := math.max(sHiY, sLoY)
+        smallDn := math.min(sHiY, sLoY)
+    else if not na(sHiY)
+        smallUp := sHiY
+    else if not na(sLoY)
+        smallDn := sLoY
+
+    r7 = ta.rsi(close, rsiLen)
+    bool ob = r7 >= rsiOB
+    bool os = r7 <= rsiOS
+    var int bst = 0
+    var float bhh = low
+    var float bll = high
+    var float lastHHp = 0.0
+    var float lastLLp = 0.0
+    var int oppBar = na
+    var float oppPx = na
+    var float swingPct = na
+    var float bubAge = na
+    var string bub = "-"
+    var float bubPx = na
+    if bst == 2 and ob
+        bhh := high
+        bub := lastHHp < high ? "HH" : "LH"
+        bubPx := high
+        oppPx := bll
+        oppBar := bar_index
+        swingPct := bll != 0 ? (high - bll) / bll * 100.0 : na
+        bubAge := 0.0
+        lastLLp := bll
+        bst := 1
+    if bst == 1 and os
+        bll := low
+        bub := lastLLp < low ? "HL" : "LL"
+        bubPx := low
+        oppPx := bhh
+        oppBar := bar_index
+        swingPct := bhh != 0 ? (bhh - low) / bhh * 100.0 : na
+        bubAge := 0.0
+        lastHHp := bhh
+        bst := 2
+    if ob
+        if high >= bhh
+            bhh := high
+            bub := lastHHp < high ? "HH" : "LH"
+            bubPx := high
+            if not na(oppPx) and oppPx != 0
+                swingPct := (high - oppPx) / oppPx * 100.0
+        bst := 1
+    if os
+        if low <= bll
+            bll := low
+            bub := lastLLp < low ? "HL" : "LL"
+            bubPx := low
+            if not na(oppPx) and oppPx != 0
+                swingPct := (oppPx - low) / oppPx * 100.0
+        bst := 2
+    if na(bubPx)
+        bubPx := bst == 1 ? bhh : bst == 2 ? bll : na
+    if not na(oppBar)
+        bubAge := math.max(0.0, float(bar_index - oppBar))
+    float lastHiPx = lastHHp != 0.0 ? lastHHp : (not na(bhh) ? bhh : na)
+    float lastLoPx = lastLLp != 0.0 ? lastLLp : (not na(bll) ? bll : na)
+    if na(oppPx)
+        oppPx := bst == 1 ? lastLoPx : bst == 2 ? lastHiPx : na
+
+    float zapFollow = ta.ema(close, zapFollowLen)
+    [zMl, zSl, _] = ta.macd(close, zapMacdFast, zapMacdSlow, zapMacdSig)
+    bool zapMacdOk = zMl > zMl[1] or zMl >= zSl
+    bool zapBaseGreen = close > zapFollow and zapMacdOk
+    float zc = zapBaseGreen ? 1.0 : -1.0
+    if r14 > 70
+        zc := 2.0
+    if r14 < 30
+        zc := -2.0
+
+    float pFast = ta.sma(close, pinkFast)
+    float pMid = ta.sma(close, pinkMid)
+    float pSlow = ta.sma(close, pinkSlow)
+    bool pinkOn = pFast > pMid and pMid > pSlow and pFast > pFast[1] and pMid > pMid[1] and pSlow > pSlow[1] and ml > sl
+    bool stackedDown = pFast < pMid and pMid < pSlow
+    float pc = pinkOn ? 1.0 : stackedDown and not mAbove ? -1.0 : 0.0
+
+    float chHi = ta.rma(high, pinkChannelLen)
+    float chLo = ta.rma(low, pinkChannelLen)
+    float chAvg = ta.rma(ohlc4, pinkPriceAvgLen)
+    float ch = chAvg > chHi ? 1.0 : chAvg < chLo ? -1.0 : 0.0
+
+    float volMa = ta.sma(volume, volMaLen)
+    float vr = not na(volMa) and volMa > 0 ? volume / volMa : 1.0
+
+    var float gaLo = na
+    var float gaHi = na
+    var float gbLo = na
+    var float gbHi = na
+    if high < low[2]
+        gaLo := high
+        gaHi := low[2]
+    if low > high[2]
+        gbLo := high[2]
+        gbHi := low
+    if low > high[1]
+        if na(gbLo) or high[1] > gbLo
+            gbLo := high[1]
+            gbHi := low
+    if high < low[1]
+        if na(gaLo) or low[1] < gaHi or na(gaHi)
+            gaLo := high
+            gaHi := low[1]
+    if not na(gaLo) and not na(gaHi) and high >= gaLo
+        if high >= gaHi
+            gaLo := na
+            gaHi := na
+    if not na(gbLo) and not na(gbHi) and low <= gbHi
+        if low <= gbLo
+            gbLo := na
+            gbHi := na
+
+    int pvs = priceVsRails == "above_upper" ? 1 : priceVsRails == "below_lower" ? 2 : priceVsRails == "inside" ? 3 : priceVsRails == "at_lower" ? 4 : priceVsRails == "at_upper" ? 5 : 0
+    int stk = stkBull ? 1 : stkBear ? -1 : 0
+    int fl = 0
+    if abv
+        fl += 1
+    if mAbove
+        fl += 2
+    if ml > ml[1]
+        fl += 4
+    if sl > sl[1]
+        fl += 8
+    if hRise
+        fl += 16
+    if hFall
+        fl += 32
+    if hi > 0
+        fl += 64
+    if bothLo
+        fl += 128
+    if bothHi
+        fl += 256
+    if crossUp
+        fl += 512
+    if crossDn
+        fl += 1024
+
+    [close, mFast, mMid, slowL, mX, lf, lm, ls, distPct, r14, r7, ml, sl, hi, railUp, railDn, railPos, stk, pvs, fl, bub, bubPx, pHi, pHi2, pLo, pLo2, smallUp, smallDn, zc, pc, ch, vr, gaLo, gaHi, gbLo, gbHi, oppPx, swingPct, bubAge, lastHiPx, lastLoPx]
+
+// Pink SMA prices only on 4H + Day (tiny tuple — avoids memory blowup on all TFs)
+f_pinkPx() =>
+    [ta.sma(close, pinkFast), ta.sma(close, pinkMid), ta.sma(close, pinkSlow)]
+
+[c15, mf15, mm15, ms15, mx15, lf15, lm15, ls15, dp15, r1415, r715, ml15, sl15, hi15, rh15, rl15, rp15, stk15, pvs15, fl15, bu15, bp15, ph15, ph215, pl15, pl215, srh15, srl15, zc15, pc15, ch15, vr15, gaLo15, gaHi15, gbLo15, gbHi15, opp15, swp15, bage15, lhi15, llo15] = request.security(syminfo.tickerid, "15", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c30, mf30, mm30, ms30, mx30, lf30, lm30, ls30, dp30, r1430, r730, ml30, sl30, hi30, rh30, rl30, rp30, stk30, pvs30, fl30, bu30, bp30, ph30, ph230, pl30, pl230, srh30, srl30, zc30, pc30, ch30, vr30, gaLo30, gaHi30, gbLo30, gbHi30, opp30, swp30, bage30, lhi30, llo30] = request.security(syminfo.tickerid, "30", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c60, mf60, mm60, ms60, mx60, lf60, lm60, ls60, dp60, r1460, r760, ml60, sl60, hi60, rh60, rl60, rp60, stk60, pvs60, fl60, bu60, bp60, ph60, ph260, pl60, pl260, srh60, srl60, zc60, pc60, ch60, vr60, gaLo60, gaHi60, gbLo60, gbHi60, opp60, swp60, bage60, lhi60, llo60] = request.security(syminfo.tickerid, "60", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c120, mf120, mm120, ms120, mx120, lf120, lm120, ls120, dp120, r14120, r7120, ml120, sl120, hi120, rh120, rl120, rp120, stk120, pvs120, fl120, bu120, bp120, ph120, ph2120, pl120, pl2120, srh120, srl120, zc120, pc120, ch120, vr120, gaLo120, gaHi120, gbLo120, gbHi120, opp120, swp120, bage120, lhi120, llo120] = request.security(syminfo.tickerid, "120", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c180, mf180, mm180, ms180, mx180, lf180, lm180, ls180, dp180, r14180, r7180, ml180, sl180, hi180, rh180, rl180, rp180, stk180, pvs180, fl180, bu180, bp180, ph180, ph2180, pl180, pl2180, srh180, srl180, zc180, pc180, ch180, vr180, gaLo180, gaHi180, gbLo180, gbHi180, opp180, swp180, bage180, lhi180, llo180] = request.security(syminfo.tickerid, "180", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c240, mf240, mm240, ms240, mx240, lf240, lm240, ls240, dp240, r14240, r7240, ml240, sl240, hi240, rh240, rl240, rp240, stk240, pvs240, fl240, bu240, bp240, ph240, ph2240, pl240, pl2240, srh240, srl240, zc240, pc240, ch240, vr240, gaLo240, gaHi240, gbLo240, gbHi240, opp240, swp240, bage240, lhi240, llo240] = request.security(syminfo.tickerid, "240", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c360, mf360, mm360, ms360, mx360, lf360, lm360, ls360, dp360, r14360, r7360, ml360, sl360, hi360, rh360, rl360, rp360, stk360, pvs360, fl360, bu360, bp360, ph360, ph2360, pl360, pl2360, srh360, srl360, zc360, pc360, ch360, vr360, gaLo360, gaHi360, gbLo360, gbHi360, opp360, swp360, bage360, lhi360, llo360] = request.security(syminfo.tickerid, "360", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c720, mf720, mm720, ms720, mx720, lf720, lm720, ls720, dp720, r14720, r7720, ml720, sl720, hi720, rh720, rl720, rp720, stk720, pvs720, fl720, bu720, bp720, ph720, ph2720, pl720, pl2720, srh720, srl720, zc720, pc720, ch720, vr720, gaLo720, gaHi720, gbLo720, gbHi720, opp720, swp720, bage720, lhi720, llo720] = request.security(syminfo.tickerid, "720", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[cD, mfD, mmD, msD, mxD, lfD, lmD, lsD, dpD, r14D, r7D, mlD, slD, hiD, rhD, rlD, rpD, stkD, pvsD, flD, buD, bpD, phD, ph2D, plD, pl2D, srhD, srlD, zcD, pcD, chD, vrD, gaLoD, gaHiD, gbLoD, gbHiD, oppD, swpD, bageD, lhiD, lloD] = request.security(syminfo.tickerid, "D", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c3D, mf3D, mm3D, ms3D, mx3D, lf3D, lm3D, ls3D, dp3D, r143D, r73D, ml3D, sl3D, hi3D, rh3D, rl3D, rp3D, stk3D, pvs3D, fl3D, bu3D, bp3D, ph3D, ph23D, pl3D, pl23D, srh3D, srl3D, zc3D, pc3D, ch3D, vr3D, gaLo3D, gaHi3D, gbLo3D, gbHi3D, opp3D, swp3D, bage3D, lhi3D, llo3D] = request.security(syminfo.tickerid, "3D", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[cW, mfW, mmW, msW, mxW, lfW, lmW, lsW, dpW, r14W, r7W, mlW, slW, hiW, rhW, rlW, rpW, stkW, pvsW, flW, buW, bpW, phW, ph2W, plW, pl2W, srhW, srlW, zcW, pcW, chW, vrW, gaLoW, gaHiW, gbLoW, gbHiW, oppW, swpW, bageW, lhiW, lloW] = request.security(syminfo.tickerid, "W", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Short TFs: same fact engine as Meter board + Other-TF MA lengths (memory-heavy but needed for bot parity)
+[c10, mf10, mm10, ms10, mx10, lf10, lm10, ls10, dp10, r1410, r710, ml10, sl10, hi10, rh10, rl10, rp10, stk10, pvs10, fl10, bu10, bp10, ph10, ph210, pl10, pl210, srh10, srl10, zc10, pc10, ch10, vr10, gaLo10, gaHi10, gbLo10, gbHi10, opp10, swp10, bage10, lhi10, llo10] = request.security(syminfo.tickerid, "10", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c5, mf5, mm5, ms5, mx5, lf5, lm5, ls5, dp5, r145, r75, ml5, sl5, hi5, rh5, rl5, rp5, stk5, pvs5, fl5, bu5, bp5, ph5, ph25, pl5, pl25, srh5, srl5, zc5, pc5, ch5, vr5, gaLo5, gaHi5, gbLo5, gbHi5, opp5, swp5, bage5, lhi5, llo5] = request.security(syminfo.tickerid, "5", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+[c2, mf2, mm2, ms2, mx2, lf2, lm2, ls2, dp2, r142, r72, ml2, sl2, hi2, rh2, rl2, rp2, stk2, pvs2, fl2, bu2, bp2, ph2, ph22, pl2, pl22, srh2, srl2, zc2, pc2, ch2, vr2, gaLo2, gaHi2, gbLo2, gbHi2, opp2, swp2, bage2, lhi2, llo2] = request.security(syminfo.tickerid, "2", f_tfFacts(), barmerge.gaps_off, barmerge.lookahead_off)
+
+[pf240, pm240, ps240] = request.security(syminfo.tickerid, "240", f_pinkPx(), barmerge.gaps_off, barmerge.lookahead_off)
+[pfD, pmD, psD] = request.security(syminfo.tickerid, "D", f_pinkPx(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Day % — same as Meter
+dayOpen = request.security(syminfo.tickerid, dayTf, open, barmerge.gaps_off, barmerge.lookahead_off)
+dayPct = not na(dayOpen) and dayOpen != 0 ? (close - dayOpen) / dayOpen * 100.0 : na
+dayAboveZero = not na(dayPct) and dayPct >= 0
+
+// Volume profile: 15m / 30m / 1H / 4H (facts only · no boxes · memory-safe)
+[poc15, zvALo15, zvAHi15, zvBLo15, zvBHi15, dlt15] = request.security(syminfo.tickerid, "15", f_vpOnly(), barmerge.gaps_off, barmerge.lookahead_off)
+[poc30, zvALo30, zvAHi30, zvBLo30, zvBHi30, dlt30] = request.security(syminfo.tickerid, "30", f_vpOnly(), barmerge.gaps_off, barmerge.lookahead_off)
+[poc60, zvALo60, zvAHi60, zvBLo60, zvBHi60, dlt60] = request.security(syminfo.tickerid, "60", f_vpOnly(), barmerge.gaps_off, barmerge.lookahead_off)
+[poc240, zvALo240, zvAHi240, zvBLo240, zvBHi240, dlt240] = request.security(syminfo.tickerid, "240", f_vpOnly(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Meter board order (short→long) then 3D/Week for higher context
+tfPacks = array.from(
+     TfPack.new("2m", c2, mf2, mm2, ms2, mx2, lf2, lm2, ls2, dp2, r142, r72, ml2, sl2, hi2, rh2, rl2, rp2, stk2, pvs2, fl2, bu2, bp2, ph2, ph22, pl2, pl22, srh2, srl2, zc2, pc2, ch2, vr2, gaLo2, gaHi2, gbLo2, gbHi2, opp2, swp2, bage2, lhi2, llo2, na, na, na, na, na, na),
+     TfPack.new("5m", c5, mf5, mm5, ms5, mx5, lf5, lm5, ls5, dp5, r145, r75, ml5, sl5, hi5, rh5, rl5, rp5, stk5, pvs5, fl5, bu5, bp5, ph5, ph25, pl5, pl25, srh5, srl5, zc5, pc5, ch5, vr5, gaLo5, gaHi5, gbLo5, gbHi5, opp5, swp5, bage5, lhi5, llo5, na, na, na, na, na, na),
+     TfPack.new("10m", c10, mf10, mm10, ms10, mx10, lf10, lm10, ls10, dp10, r1410, r710, ml10, sl10, hi10, rh10, rl10, rp10, stk10, pvs10, fl10, bu10, bp10, ph10, ph210, pl10, pl210, srh10, srl10, zc10, pc10, ch10, vr10, gaLo10, gaHi10, gbLo10, gbHi10, opp10, swp10, bage10, lhi10, llo10, na, na, na, na, na, na),
+     TfPack.new("15m", c15, mf15, mm15, ms15, mx15, lf15, lm15, ls15, dp15, r1415, r715, ml15, sl15, hi15, rh15, rl15, rp15, stk15, pvs15, fl15, bu15, bp15, ph15, ph215, pl15, pl215, srh15, srl15, zc15, pc15, ch15, vr15, gaLo15, gaHi15, gbLo15, gbHi15, opp15, swp15, bage15, lhi15, llo15, poc15, zvALo15, zvAHi15, zvBLo15, zvBHi15, dlt15),
+     TfPack.new("30m", c30, mf30, mm30, ms30, mx30, lf30, lm30, ls30, dp30, r1430, r730, ml30, sl30, hi30, rh30, rl30, rp30, stk30, pvs30, fl30, bu30, bp30, ph30, ph230, pl30, pl230, srh30, srl30, zc30, pc30, ch30, vr30, gaLo30, gaHi30, gbLo30, gbHi30, opp30, swp30, bage30, lhi30, llo30, poc30, zvALo30, zvAHi30, zvBLo30, zvBHi30, dlt30),
+     TfPack.new("1H", c60, mf60, mm60, ms60, mx60, lf60, lm60, ls60, dp60, r1460, r760, ml60, sl60, hi60, rh60, rl60, rp60, stk60, pvs60, fl60, bu60, bp60, ph60, ph260, pl60, pl260, srh60, srl60, zc60, pc60, ch60, vr60, gaLo60, gaHi60, gbLo60, gbHi60, opp60, swp60, bage60, lhi60, llo60, poc60, zvALo60, zvAHi60, zvBLo60, zvBHi60, dlt60),
+     TfPack.new("2H", c120, mf120, mm120, ms120, mx120, lf120, lm120, ls120, dp120, r14120, r7120, ml120, sl120, hi120, rh120, rl120, rp120, stk120, pvs120, fl120, bu120, bp120, ph120, ph2120, pl120, pl2120, srh120, srl120, zc120, pc120, ch120, vr120, gaLo120, gaHi120, gbLo120, gbHi120, opp120, swp120, bage120, lhi120, llo120, na, na, na, na, na, na),
+     TfPack.new("3H", c180, mf180, mm180, ms180, mx180, lf180, lm180, ls180, dp180, r14180, r7180, ml180, sl180, hi180, rh180, rl180, rp180, stk180, pvs180, fl180, bu180, bp180, ph180, ph2180, pl180, pl2180, srh180, srl180, zc180, pc180, ch180, vr180, gaLo180, gaHi180, gbLo180, gbHi180, opp180, swp180, bage180, lhi180, llo180, na, na, na, na, na, na),
+     TfPack.new("4H", c240, mf240, mm240, ms240, mx240, lf240, lm240, ls240, dp240, r14240, r7240, ml240, sl240, hi240, rh240, rl240, rp240, stk240, pvs240, fl240, bu240, bp240, ph240, ph2240, pl240, pl2240, srh240, srl240, zc240, pc240, ch240, vr240, gaLo240, gaHi240, gbLo240, gbHi240, opp240, swp240, bage240, lhi240, llo240, poc240, zvALo240, zvAHi240, zvBLo240, zvBHi240, dlt240),
+     TfPack.new("6H", c360, mf360, mm360, ms360, mx360, lf360, lm360, ls360, dp360, r14360, r7360, ml360, sl360, hi360, rh360, rl360, rp360, stk360, pvs360, fl360, bu360, bp360, ph360, ph2360, pl360, pl2360, srh360, srl360, zc360, pc360, ch360, vr360, gaLo360, gaHi360, gbLo360, gbHi360, opp360, swp360, bage360, lhi360, llo360, na, na, na, na, na, na),
+     TfPack.new("12H", c720, mf720, mm720, ms720, mx720, lf720, lm720, ls720, dp720, r14720, r7720, ml720, sl720, hi720, rh720, rl720, rp720, stk720, pvs720, fl720, bu720, bp720, ph720, ph2720, pl720, pl2720, srh720, srl720, zc720, pc720, ch720, vr720, gaLo720, gaHi720, gbLo720, gbHi720, opp720, swp720, bage720, lhi720, llo720, na, na, na, na, na, na),
+     TfPack.new("Day", cD, mfD, mmD, msD, mxD, lfD, lmD, lsD, dpD, r14D, r7D, mlD, slD, hiD, rhD, rlD, rpD, stkD, pvsD, flD, buD, bpD, phD, ph2D, plD, pl2D, srhD, srlD, zcD, pcD, chD, vrD, gaLoD, gaHiD, gbLoD, gbHiD, oppD, swpD, bageD, lhiD, lloD, na, na, na, na, na, na),
+     TfPack.new("3D", c3D, mf3D, mm3D, ms3D, mx3D, lf3D, lm3D, ls3D, dp3D, r143D, r73D, ml3D, sl3D, hi3D, rh3D, rl3D, rp3D, stk3D, pvs3D, fl3D, bu3D, bp3D, ph3D, ph23D, pl3D, pl23D, srh3D, srl3D, zc3D, pc3D, ch3D, vr3D, gaLo3D, gaHi3D, gbLo3D, gbHi3D, opp3D, swp3D, bage3D, lhi3D, llo3D, na, na, na, na, na, na),
+     TfPack.new("Week", cW, mfW, mmW, msW, mxW, lfW, lmW, lsW, dpW, r14W, r7W, mlW, slW, hiW, rhW, rlW, rpW, stkW, pvsW, flW, buW, bpW, phW, ph2W, plW, pl2W, srhW, srlW, zcW, pcW, chW, vrW, gaLoW, gaHiW, gbLoW, gbHiW, oppW, swpW, bageW, lhiW, lloW, na, na, na, na, na, na))
+
+
+r7c = ta.rsi(close, rsiLen)
+var int bstC = 0
+var float bhhC = low
+var float bllC = high
+var float lastHHpC = 0.0
+var float lastLLpC = 0.0
+var float oppPxC = na
+var float swingPctC = na
+var string lastBubble = "-"
+var float lastFiredBubPx = na
+bool newHighBubble = false
+bool newLowBubble = false
+bool extremeMoved = false
+if bstC == 2 and r7c >= rsiOB
+    bhhC := high
+    lastBubble := lastHHpC < high ? "HH" : "LH"
+    oppPxC := bllC
+    swingPctC := bllC != 0 ? (high - bllC) / bllC * 100.0 : na
+    lastLLpC := bllC
+    bstC := 1
+    newHighBubble := true
+if bstC == 1 and r7c <= rsiOS
+    bllC := low
+    lastBubble := lastLLpC < low ? "HL" : "LL"
+    oppPxC := bhhC
+    swingPctC := bhhC != 0 ? (bhhC - low) / bhhC * 100.0 : na
+    lastHHpC := bhhC
+    bstC := 2
+    newLowBubble := true
+if r7c >= rsiOB
+    if high >= bhhC
+        if high != bhhC
+            extremeMoved := true
+        bhhC := high
+        lastBubble := lastHHpC < high ? "HH" : "LH"
+        if not na(oppPxC) and oppPxC != 0
+            swingPctC := (high - oppPxC) / oppPxC * 100.0
+    bstC := 1
+if r7c <= rsiOS
+    if low <= bllC
+        if low != bllC
+            extremeMoved := true
+        bllC := low
+        lastBubble := lastLLpC < low ? "HL" : "LL"
+        if not na(oppPxC) and oppPxC != 0
+            swingPctC := (oppPxC - low) / oppPxC * 100.0
+    bstC := 2
+
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSig)
+rsi14 = ta.rsi(close, rsi14Len)
+
+float zapFollowC = ta.ema(close, zapFollowLen)
+[zMlC, zSlC, _] = ta.macd(close, zapMacdFast, zapMacdSlow, zapMacdSig)
+bool zapMacdOkC = zMlC > zMlC[1] or zMlC >= zSlC
+float zcC = close > zapFollowC and zapMacdOkC ? 1.0 : -1.0
+if rsi14 > 70
+    zcC := 2.0
+if rsi14 < 30
+    zcC := -2.0
+float pFastC = ta.sma(close, pinkFast)
+float pMidC = ta.sma(close, pinkMid)
+float pSlowC = ta.sma(close, pinkSlow)
+bool pinkOnC = pFastC > pMidC and pMidC > pSlowC and pFastC > pFastC[1] and pMidC > pMidC[1] and pSlowC > pSlowC[1] and macdLine > signalLine
+bool stackedDownC = pFastC < pMidC and pMidC < pSlowC
+float pcC = pinkOnC ? 1.0 : stackedDownC and not (macdLine > signalLine) ? -1.0 : 0.0
+float chHiC = ta.rma(high, pinkChannelLen)
+float chLoC = ta.rma(low, pinkChannelLen)
+float chAvgC = ta.rma(ohlc4, pinkPriceAvgLen)
+float chC = chAvgC > chHiC ? 1.0 : chAvgC < chLoC ? -1.0 : 0.0
+float volMaC = ta.sma(volume, volMaLen)
+float vrC = not na(volMaC) and volMaC > 0 ? volume / volMaC : 1.0
+
+bubChanged(cur, prev) =>
+    cur != prev and cur != "-" and cur != ""
+
+float chartBubPx = bstC == 1 ? bhhC : bstC == 2 ? bllC : na
+bool letterFire = bubChanged(lastBubble, lastBubble[1])
+bool flipFire = newHighBubble or newLowBubble
+bool pxFire = fireOnPxUpdate and extremeMoved and lastBubble != "-" and lastBubble != "" and (na(lastFiredBubPx) or chartBubPx != lastFiredBubPx)
+
+// Alert on chart TF (1m). Full multi-TF pack still sent.
+bool urgentFire = letterFire or flipFire
+fire = urgentFire or pxFire
+
+triggerTfs = ""
+triggerTfs := fire ? "chart:" + lastBubble : ""
+if fire and flipFire
+    triggerTfs := triggerTfs + "|flip"
+if fire and pxFire and not urgentFire
+    triggerTfs := triggerTfs + "|px"
+
+jsonEsc(s) =>
+    str.replace_all(str.replace_all(s, "\\", "/"), '"', "'")
+
+jsonNum(v) =>
+    na(v) ? "null" : str.tostring(v, format.mintick)
+
+jsonPct(v) =>
+    na(v) ? "null" : str.tostring(v, "#.####")
+
+jsonBit(fl, div) =>
+    int(fl / div) % 2 == 1 ? "true" : "false"
+
+zapTxt(z) =>
+    z == 1 ? "GREEN" : z == -1 ? "RED" : z == 2 ? "PURPLE" : z == -2 ? "GRAY" : "-"
+
+pinkTxt(p) =>
+    p == 1 ? "GREEN" : p == -1 ? "RED" : "GRAY"
+
+chTxt(c) =>
+    c == 1 ? "up" : c == -1 ? "down" : "mid"
+
+tfOne(t) =>
+    string pvsTxt = t.pvs == 1 ? "above_upper" : t.pvs == 2 ? "below_lower" : t.pvs == 3 ? "inside" : t.pvs == 4 ? "at_lower" : t.pvs == 5 ? "at_upper" : "none"
+    string stkTxt = t.stk == 1 ? "bull" : t.stk == -1 ? "bear" : "mixed"
+    // Full rows only on decision TFs. Others lean (bub letter still present). Alert size limit.
+    bool lean = not (t.name == "15m" or t.name == "30m" or t.name == "1H" or t.name == "4H" or t.name == "Day")
+    string out = ""
+    if lean
+        out := (
+             '{"tf":"' + t.name + '"' +
+             ',"c":' + jsonNum(t.c) +
+             ',"mf":' + jsonNum(t.mf) +
+             ',"mm":' + jsonNum(t.mm) +
+             ',"ms":' + jsonNum(t.ms) +
+             ',"stk":"' + stkTxt + '"' +
+             ',"r14":' + (na(t.r14) ? "null" : str.tostring(t.r14, "#.##")) +
+             ',"mAbove":' + jsonBit(t.fl, 2) +
+             ',"bub":"' + t.bub + '"' +
+             ',"bubPx":' + jsonNum(t.bubPx) +
+             ',"oppPx":' + jsonNum(t.oppPx) +
+             ',"swingPct":' + (na(t.swingPct) ? "null" : str.tostring(t.swingPct, "#.##")) +
+             ',"srl":' + jsonNum(t.srl) +
+             ',"srh":' + jsonNum(t.srh) +
+             ',"zap":"' + zapTxt(t.zc) + '"' +
+             ',"pink":"' + pinkTxt(t.pc) + '"' +
+             ',"channel":"' + chTxt(t.ch) + '"' +
+             ',"volRatio":' + (na(t.vr) ? "null" : str.tostring(t.vr, "#.##")) +
+             '}')
+    else
+        out := (
+         '{"tf":"' + t.name + '"' +
+         ',"c":' + jsonNum(t.c) +
+         ',"mf":' + jsonNum(t.mf) +
+         ',"mm":' + jsonNum(t.mm) +
+         ',"ms":' + jsonNum(t.ms) +
+         ',"mx":' + jsonNum(t.mx) +
+         ',"stk":"' + stkTxt + '"' +
+         ',"r14":' + (na(t.r14) ? "null" : str.tostring(t.r14, "#.##")) +
+         ',"ml":' + jsonNum(t.ml) +
+         ',"sl":' + jsonNum(t.sl) +
+         ',"hi":' + jsonNum(t.hi) +
+         ',"mAbove":' + jsonBit(t.fl, 2) +
+         ',"hRise":' + jsonBit(t.fl, 16) +
+         ',"hFall":' + jsonBit(t.fl, 32) +
+         ',"bothLo":' + jsonBit(t.fl, 128) +
+         ',"bothHi":' + jsonBit(t.fl, 256) +
+         ',"xUp":' + jsonBit(t.fl, 512) +
+         ',"xDn":' + jsonBit(t.fl, 1024) +
+         ',"rh":' + jsonNum(t.rh) +
+         ',"rl":' + jsonNum(t.rl) +
+         ',"pvs":"' + pvsTxt + '"' +
+         ',"bub":"' + t.bub + '"' +
+         ',"bubPx":' + jsonNum(t.bubPx) +
+         ',"oppPx":' + jsonNum(t.oppPx) +
+         ',"swingPct":' + (na(t.swingPct) ? "null" : str.tostring(t.swingPct, "#.##")) +
+         ',"ph":' + jsonNum(t.ph) +
+         ',"ph2":' + jsonNum(t.ph2) +
+         ',"pl":' + jsonNum(t.pl) +
+         ',"pl2":' + jsonNum(t.pl2) +
+         ',"srh":' + jsonNum(t.srh) +
+         ',"srl":' + jsonNum(t.srl) +
+         ',"zap":"' + zapTxt(t.zc) + '"' +
+         ',"pink":"' + pinkTxt(t.pc) + '"' +
+         ',"channel":"' + chTxt(t.ch) + '"' +
+         ',"volRatio":' + (na(t.vr) ? "null" : str.tostring(t.vr, "#.##")) +
+         ',"poc":' + jsonNum(t.poc) +
+         ',"deltaPct":' + (na(t.deltaPct) ? "null" : str.tostring(t.deltaPct, "#.##")) +
+         ',"gapAboveLo":' + jsonNum(t.gaLo) +
+         ',"gapAboveHi":' + jsonNum(t.gaHi) +
+         ',"gapBelowLo":' + jsonNum(t.gbLo) +
+         ',"gapBelowHi":' + jsonNum(t.gbHi) +
+         ',"zvAboveLo":' + jsonNum(t.zvALo) +
+         ',"zvAboveHi":' + jsonNum(t.zvAHi) +
+         ',"zvBelowLo":' + jsonNum(t.zvBLo) +
+         ',"zvBelowHi":' + jsonNum(t.zvBHi))
+        if t.name == "4H"
+            out := out + ',"pf":' + jsonNum(pf240) + ',"pm":' + jsonNum(pm240) + ',"ps":' + jsonNum(ps240)
+        if t.name == "Day"
+            out := out + ',"pf":' + jsonNum(pfD) + ',"pm":' + jsonNum(pmD) + ',"ps":' + jsonNum(psD)
+        out := out + '}'
+    out
+
+tfsJson(arr) =>
+    string s = "["
+    int n = array.size(arr)
+    if n > 0
+        for i = 0 to n - 1
+            if i > 0
+                s := s + ","
+            s := s + tfOne(array.get(arr, i))
+    s := s + "]"
+    s
+
+// Meter bubble strip only (same 12 TFs as Meter board, letter+px)
+boardJson(arr) =>
+    string s = "["
+    int n = array.size(arr)
+    bool first = true
+    if n > 0
+        for i = 0 to n - 1
+            TfPack t = array.get(arr, i)
+            if t.name != "3D" and t.name != "Week"
+                if not first
+                    s := s + ","
+                first := false
+                s := s + '{"tf":"' + t.name + '","bub":"' + t.bub + '","bubPx":' + jsonNum(t.bubPx) + "}"
+    s := s + "]"
+    s
+
+hookPayload() =>
+    string chj = "{"
+    chj := chj + '"bubble":"' + jsonEsc(lastBubble) + '",'
+    chj := chj + '"bubblePx":' + jsonNum(chartBubPx) + ","
+    chj := chj + '"oppPx":' + jsonNum(oppPxC) + ","
+    chj := chj + '"swingPct":' + (na(swingPctC) ? "null" : str.tostring(swingPctC, "#.##")) + '}'
+    string p = "{"
+    p := p + '"type":"scene",'
+    p := p + '"schema":"facts_v8_meter",'
+    p := p + '"symbol":"' + syminfo.ticker + '",'
+    p := p + '"exchange":"' + syminfo.prefix + '",'
+    p := p + '"chartTf":"' + timeframe.period + '",'
+    p := p + '"time":' + str.tostring(time) + ","
+    p := p + '"price":' + str.tostring(close, format.mintick) + ","
+    p := p + '"open":' + str.tostring(open, format.mintick) + ","
+    p := p + '"high":' + str.tostring(high, format.mintick) + ","
+    p := p + '"low":' + str.tostring(low, format.mintick) + ","
+    p := p + '"barConfirmed":' + (barstate.isconfirmed ? "true" : "false") + ","
+    p := p + '"dayPct":' + (na(dayPct) ? "null" : str.tostring(dayPct, "#.##")) + ","
+    p := p + '"dayAboveZero":' + (dayAboveZero ? "true" : "false") + ","
+    p := p + '"regime":"' + (isBull ? "bull" : "bear") + '",'
+    p := p + '"regimeScope":"yearly_manual",'
+    p := p + '"trigger":"' + jsonEsc(triggerTfs) + '",'
+    p := p + '"centerTf":"4H",'
+    p := p + '"chart":' + chj + ","
+    p := p + '"board":' + boardJson(tfPacks) + ","
+    p := p + '"tfs":' + tfsJson(tfPacks) + "}"
+    p
+
+// Hybrid: new bubble / letter → send once in this bar (can be mid-bar).
+// Price-only move → wait for 1m close.
+bool sendUrgent = enableHook and urgentFire and (hybridUrgent or barstate.isconfirmed)
+bool sendPxClose = enableHook and pxFire and not urgentFire and barstate.isconfirmed
+if sendUrgent
+    alert(hookPayload(), hybridUrgent ? alert.freq_once_per_bar : alert.freq_once_per_bar_close)
+    lastFiredBubPx := chartBubPx
+if sendPxClose
+    alert(hookPayload(), alert.freq_once_per_bar_close)
+    lastFiredBubPx := chartBubPx
+
+plotshape(showFireMark and (sendUrgent or sendPxClose), title="Hook fire", style=shape.diamond, location=location.abovebar, color=color.new(color.orange, 0), size=size.tiny, text="WH")
+plotchar(showFireMark and lastBubble != "-" and lastBubble != "", title="Bubble letter", char="", location=location.belowbar, color=color.new(color.gray, 100))
+if showFireMark and barstate.islast
+    var table dbg = table.new(position.top_right, 1, 3, bgcolor=color.new(color.black, 70))
+    table.cell(dbg, 0, 0, "Hook " + lastBubble, text_color=color.white, text_size=size.small)
+    string fireLbl = sendUrgent ? (hybridUrgent ? "FIRE now" : "FIRE close") : sendPxClose ? "FIRE px close" : fire ? "armed" : "wait"
+    table.cell(dbg, 0, 1, fireLbl, text_color=fire ? color.orange : color.gray, text_size=size.small)
+    table.cell(dbg, 0, 2, na(chartBubPx) ? "-" : str.tostring(chartBubPx, format.mintick), text_color=color.aqua, text_size=size.small)
+
+plot(na, title="Hook placeholder", display=display.none)

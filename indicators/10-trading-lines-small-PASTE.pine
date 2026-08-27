@@ -1,0 +1,911 @@
+// TradingView Pine Script v6
+// Trading Lines — two engines (RSI 7 + RSI 3)
+//
+// Each engine: anchor pivot + close pivot define the line; later pivots on same line = reinforcements.
+// Confirmed pivots only on swing close (not on live extension). Second pivot closes the line; last does not move it.
+// Signals/cancel only through last closed bar.
+// SHORT: black high crosses up through purple high, and SHORT close >= first purple high pivot (first bubble point).
+// LONG:  purple low cuts down through black low, and LONG close <= first purple low pivot (first bubble point).
+// Cancel: purple first, also black (either). Last lit bubble only.
+// Horizontal endpoint lines: daily pivots only (not chart TF).
+// Orange: black first high → each purple high only; black first low → each purple low only. Forward + extend right.
+//
+// Author: Ron Belson
+//@version=6
+indicator("Trading Lines", overlay=true, max_bars_back=5000, max_lines_count=500, max_labels_count=500)
+
+rsiOB = input.int(70, "Overbought", minval=51, maxval=100, group="RSI")
+rsiOS = input.int(30, "Oversold", minval=1, maxval=49, group="RSI")
+
+g7 = "Engine 7"
+rsiLen7 = input.int(7, "RSI length", minval=1, group=g7)
+colLow7 = input.color(color.black, "Low line color", group=g7)
+colHigh7 = input.color(color.black, "High line color", group=g7)
+showLow7 = input.bool(true, "Show low line", group=g7)
+showHigh7 = input.bool(true, "Show high line", group=g7)
+
+g3 = "Engine 3"
+rsiLen3 = input.int(3, "RSI length", minval=1, group=g3)
+colLow3 = input.color(color.purple, "Low line color", group=g3)
+colHigh3 = input.color(color.purple, "High line color", group=g3)
+showLow3 = input.bool(true, "Show low line", group=g3)
+showHigh3 = input.bool(true, "Show high line", group=g3)
+
+lineWidth = input.int(2, "Line width", minval=1, maxval=5, group="Style")
+extendRight = input.bool(true, "Extend right", group="Style")
+showTradingLines = input.bool(true, "Show trading lines", group="Style")
+showEndHlines = input.bool(false, "Horizontal from each endpoint", group="Style")
+showBubbleGap = input.bool(true, "Gap from previous bubble", group="Style")
+lineReinfPct = input.float(1.0, "Reinforcement near line %", minval=0.1, maxval=5.0, step=0.1, group="Style")
+gOrange = "Orange lines"
+showBridgeHi = input.bool(true, "Black first high to each purple high", group=gOrange)
+showBridgeLo = input.bool(true, "Black first low to each purple low", group=gOrange)
+extendOrange = input.bool(true, "Extend bridge lines right", group=gOrange)
+colBridgeHi = input.color(color.red, "High bridge color", group=gOrange)
+colBridgeLo = input.color(color.green, "Low bridge color", group=gOrange)
+bridgeWidth = input.int(1, "Bridge line width", minval=1, maxval=4, group=gOrange)
+
+gSig = "Signals"
+showSignals = input.bool(true, "Show SHORT / LONG bubbles", group=gSig)
+colShort = input.color(color.red, "SHORT color", group=gSig)
+colLong = input.color(color.green, "LONG color", group=gSig)
+colCancel = input.color(color.gray, "Cancel color", group=gSig)
+
+f_confirmPivotTime(bool confirm, float px, int tm, array<float> pxArr, array<int> timeArr) =>
+    if confirm and not na(px) and not na(tm)
+        array.push(pxArr, px)
+        array.push(timeArr, tm)
+    while array.size(pxArr) > 50
+        array.shift(pxArr)
+        array.shift(timeArr)
+
+f_lineAt(int xBar, int found, float pA, int bA, float pB, int bB) =>
+    float out = na
+    if found == 2 and not na(pA) and not na(pB) and not na(bA) and not na(bB)
+        out := bA == bB ? pB : pA + (pB - pA) * (xBar - bA) / (bB - bA)
+    out
+
+f_lineAtTime(int xTime, float pA, int tA, float pB, int tB) =>
+    float out = na
+    if not na(pA) and not na(pB) and not na(tA) and not na(tB)
+        out := tA == tB ? pB : pA + (pB - pA) * (float(xTime - tA) / float(tB - tA))
+    out
+
+f_nearLine(float px, int br, float pA, int bA, float pB, int bB) =>
+    lineY = f_lineAt(br, 2, pA, bA, pB, bB)
+    not na(lineY) and lineY > 0 and math.abs(px - lineY) / lineY * 100.0 <= lineReinfPct
+
+f_nearLineTime(float px, int tm, float pA, int tA, float pB, int tB) =>
+    lineY = f_lineAtTime(tm, pA, tA, pB, tB)
+    not na(lineY) and lineY > 0 and math.abs(px - lineY) / lineY * 100.0 <= lineReinfPct
+
+f_countClosed(array<int> barArr, bool live) =>
+    int n = 0
+    sz = array.size(barArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            b = array.get(barArr, i)
+            ok = live ? b <= bar_index : b < bar_index
+            if ok
+                n += 1
+    n
+
+f_idxClosedK(array<int> barArr, int k, bool live) =>
+    int idx = na
+    int cnt = 0
+    sz = array.size(barArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            b = array.get(barArr, i)
+            ok = live ? b <= bar_index : b < bar_index
+            if ok
+                if cnt == k
+                    idx := i
+                    break
+                cnt += 1
+    idx
+
+f_countClosedTime(array<int> timeArr) =>
+    int n = 0
+    sz = array.size(timeArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            if array.get(timeArr, i) < time
+                n += 1
+    n
+
+f_idxClosedKTime(array<int> timeArr, int k) =>
+    int idx = na
+    int cnt = 0
+    sz = array.size(timeArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            if array.get(timeArr, i) < time
+                if cnt == k
+                    idx := i
+                    break
+                cnt += 1
+    idx
+
+f_nearLineIdx(array<float> pxArr, array<int> barArr, int idx, int iA, int iB) =>
+    f_nearLine(array.get(pxArr, idx), array.get(barArr, idx), array.get(pxArr, iA), array.get(barArr, iA), array.get(pxArr, iB), array.get(barArr, iB))
+
+f_resolveLineLeg(pxArr, barArr, timeArr, bool live) =>
+    float pA = na
+    int tA = na
+    int bA = na
+    float pB = na
+    int tB = na
+    int bB = na
+    int reinf = 0
+    int found = 0
+    n = f_countClosed(barArr, live)
+    if n >= 2
+        lastK = n - 1
+        resolved = false
+        for pB_k = lastK - 1 to 0
+            if pB_k >= 1
+                pA_k = pB_k - 1
+                iA = f_idxClosedK(barArr, pA_k, live)
+                iB = f_idxClosedK(barArr, pB_k, live)
+                reinf := lastK - pB_k
+                ok = true
+                if reinf > 0
+                    for j_k = pB_k + 1 to lastK
+                        jIdx = f_idxClosedK(barArr, j_k, live)
+                        if not f_nearLineIdx(pxArr, barArr, jIdx, iA, iB)
+                            ok := false
+                            break
+                if ok and not na(iA) and not na(iB)
+                    pA := array.get(pxArr, iA)
+                    tA := array.get(timeArr, iA)
+                    bA := array.get(barArr, iA)
+                    pB := array.get(pxArr, iB)
+                    tB := array.get(timeArr, iB)
+                    bB := array.get(barArr, iB)
+                    found := 2
+                    resolved := true
+                    break
+        if not resolved
+            iA = f_idxClosedK(barArr, n - 2, live)
+            iB = f_idxClosedK(barArr, n - 1, live)
+            if not na(iA) and not na(iB)
+                pA := array.get(pxArr, iA)
+                tA := array.get(timeArr, iA)
+                bA := array.get(barArr, iA)
+                pB := array.get(pxArr, iB)
+                tB := array.get(timeArr, iB)
+                bB := array.get(barArr, iB)
+                found := 2
+                reinf := 0
+    [found, pA, tA, bA, pB, tB, bB, reinf]
+
+f_resolveLineLegTime(array<float> pxArr, array<int> timeArr) =>
+    float pA = na
+    int tA = na
+    float pB = na
+    int tB = na
+    int reinf = 0
+    int found = 0
+    n = f_countClosedTime(timeArr)
+    if n >= 2
+        lastK = n - 1
+        resolved = false
+        for pB_k = lastK - 1 to 0
+            if pB_k >= 1
+                pA_k = pB_k - 1
+                iA = f_idxClosedKTime(timeArr, pA_k)
+                iB = f_idxClosedKTime(timeArr, pB_k)
+                reinf := lastK - pB_k
+                ok = true
+                if reinf > 0
+                    for j_k = pB_k + 1 to lastK
+                        jIdx = f_idxClosedKTime(timeArr, j_k)
+                        if not f_nearLineTime(array.get(pxArr, jIdx), array.get(timeArr, jIdx), array.get(pxArr, iA), array.get(timeArr, iA), array.get(pxArr, iB), array.get(timeArr, iB))
+                            ok := false
+                            break
+                if ok and not na(iA) and not na(iB)
+                    pA := array.get(pxArr, iA)
+                    tA := array.get(timeArr, iA)
+                    pB := array.get(pxArr, iB)
+                    tB := array.get(timeArr, iB)
+                    found := 2
+                    resolved := true
+                    break
+        if not resolved
+            iA = f_idxClosedKTime(timeArr, n - 2)
+            iB = f_idxClosedKTime(timeArr, n - 1)
+            if not na(iA) and not na(iB)
+                pA := array.get(pxArr, iA)
+                tA := array.get(timeArr, iA)
+                pB := array.get(pxArr, iB)
+                tB := array.get(timeArr, iB)
+                found := 2
+                reinf := 0
+    [found, pA, tA, pB, tB, reinf]
+
+f_rsiEnginePivots(int rsiLen, int obLvl, int osLvl) =>
+    rsi = ta.rsi(close, rsiLen)
+    ob = rsi >= obLvl
+    os = rsi <= osLvl
+    var int st = 0
+    var float hh = low
+    var float ll = high
+    var float curHiPx = na
+    var float curLoPx = na
+    var int curHiTime = na
+    var int curLoTime = na
+    newHi = false
+    movHi = false
+    newLo = false
+    movLo = false
+    if st == 2 and ob
+        hh := high
+        curHiPx := high
+        curHiTime := time
+        newHi := true
+        st := 1
+    if st == 1 and os
+        ll := low
+        curLoPx := low
+        curLoTime := time
+        newLo := true
+        st := 2
+    if ob
+        if high >= hh
+            hh := high
+            curHiPx := high
+            curHiTime := time
+            movHi := true
+        st := 1
+    if os
+        if low <= ll
+            ll := low
+            curLoPx := low
+            curLoTime := time
+            movLo := true
+        st := 2
+    if st == 1 and high >= hh
+        hh := high
+        curHiPx := high
+        curHiTime := time
+        movHi := true
+    if st == 2 and low <= ll
+        ll := low
+        curLoPx := low
+        curLoTime := time
+        movLo := true
+    var array<float> hiPx = array.new_float()
+    var array<int> hiTime = array.new_int()
+    var array<float> loPx = array.new_float()
+    var array<int> loTime = array.new_int()
+    f_confirmPivotTime(newLo, curHiPx, curHiTime, hiPx, hiTime)
+    f_confirmPivotTime(newHi, curLoPx, curLoTime, loPx, loTime)
+    [fHi, pAHi, tAHi, pBHi, tBHi, _rHi] = f_resolveLineLegTime(hiPx, hiTime)
+    [fLo, pALo, tALo, pBLo, tBLo, _rLo] = f_resolveLineLegTime(loPx, loTime)
+    [fHi, pAHi, tAHi, pBHi, tBHi, fLo, pALo, tALo, pBLo, tBLo]
+
+f_confirmPivot(bool confirm, float px, int br, int tm, array<float> pxArr, array<int> barArr, array<int> timeArr) =>
+    if confirm and not na(px) and not na(br) and not na(tm)
+        array.push(pxArr, px)
+        array.push(barArr, br)
+        array.push(timeArr, tm)
+    while array.size(pxArr) > 50
+        array.shift(pxArr)
+        array.shift(barArr)
+        array.shift(timeArr)
+
+f_drawPair(bool showLo, bool showHi, array<float> loPx, array<int> loBar, array<int> loTime, array<float> hiPx, array<int> hiBar, array<int> hiTime, color cLo, color cHi, line loLine, line hiLine) =>
+    line outLo = loLine
+    line outHi = hiLine
+    if not na(outLo)
+        line.delete(outLo)
+        outLo := na
+    if not na(outHi)
+        line.delete(outHi)
+        outHi := na
+    ext = extendRight ? extend.right : extend.none
+    if showLo
+        [foundLo, pA, tA, bA, pB, tB, bB, reinfLo] = f_resolveLineLeg(loPx, loBar, loTime, false)
+        wLo = math.min(lineWidth + reinfLo, 5)
+        if foundLo == 2 and not na(pA) and not na(pB) and not na(tA) and not na(tB)
+            outLo := tA < tB ? line.new(tA, pA, tB, pB, xloc=xloc.bar_time, color=cLo, width=wLo, extend=ext) : line.new(tB, pB, tA, pA, xloc=xloc.bar_time, color=cLo, width=wLo, extend=ext)
+    if showHi
+        [foundHi, pA, tA, bA, pB, tB, bB, reinfHi] = f_resolveLineLeg(hiPx, hiBar, hiTime, false)
+        wHi = math.min(lineWidth + reinfHi, 5)
+        if foundHi == 2 and not na(pA) and not na(pB) and not na(tA) and not na(tB)
+            outHi := tA < tB ? line.new(tA, pA, tB, pB, xloc=xloc.bar_time, color=cHi, width=wHi, extend=ext) : line.new(tB, pB, tA, pA, xloc=xloc.bar_time, color=cHi, width=wHi, extend=ext)
+    [outLo, outHi]
+
+// =============================================================================
+// ENGINE 7
+// =============================================================================
+rsi7 = ta.rsi(close, rsiLen7)
+ob7 = rsi7 >= rsiOB
+os7 = rsi7 <= rsiOS
+
+var int st7 = 0
+var float hh7 = low
+var float ll7 = high
+var float curHiPx7 = na
+var float curLoPx7 = na
+var int curHiBar7 = na
+var int curHiTime7 = na
+var int curLoBar7 = na
+var int curLoTime7 = na
+
+newHi7 = false
+movHi7 = false
+newLo7 = false
+movLo7 = false
+
+if st7 == 2 and ob7
+    hh7 := high
+    curHiPx7 := high
+    curHiBar7 := bar_index
+    curHiTime7 := time
+    newHi7 := true
+    st7 := 1
+
+if st7 == 1 and os7
+    ll7 := low
+    curLoPx7 := low
+    curLoBar7 := bar_index
+    curLoTime7 := time
+    newLo7 := true
+    st7 := 2
+
+if ob7
+    if high >= hh7
+        hh7 := high
+        curHiPx7 := high
+        curHiBar7 := bar_index
+        curHiTime7 := time
+        movHi7 := true
+    st7 := 1
+
+if os7
+    if low <= ll7
+        ll7 := low
+        curLoPx7 := low
+        curLoBar7 := bar_index
+        curLoTime7 := time
+        movLo7 := true
+    st7 := 2
+
+if st7 == 1 and high >= hh7
+    hh7 := high
+    curHiPx7 := high
+    curHiBar7 := bar_index
+    curHiTime7 := time
+    movHi7 := true
+
+if st7 == 2 and low <= ll7
+    ll7 := low
+    curLoPx7 := low
+    curLoBar7 := bar_index
+    curLoTime7 := time
+    movLo7 := true
+
+var array<float> hiPx7 = array.new_float()
+var array<int> hiBar7 = array.new_int()
+var array<int> hiTime7 = array.new_int()
+var array<float> loPx7 = array.new_float()
+var array<int> loBar7 = array.new_int()
+var array<int> loTime7 = array.new_int()
+
+f_confirmPivot(newLo7, curHiPx7, curHiBar7, curHiTime7, hiPx7, hiBar7, hiTime7)
+f_confirmPivot(newHi7, curLoPx7, curLoBar7, curLoTime7, loPx7, loBar7, loTime7)
+
+// =============================================================================
+// ENGINE 3
+// =============================================================================
+rsi3 = ta.rsi(close, rsiLen3)
+ob3 = rsi3 >= rsiOB
+os3 = rsi3 <= rsiOS
+
+var int st3 = 0
+var float hh3 = low
+var float ll3 = high
+var float curHiPx3 = na
+var float curLoPx3 = na
+var int curHiBar3 = na
+var int curHiTime3 = na
+var int curLoBar3 = na
+var int curLoTime3 = na
+
+newHi3 = false
+movHi3 = false
+newLo3 = false
+movLo3 = false
+
+if st3 == 2 and ob3
+    hh3 := high
+    curHiPx3 := high
+    curHiBar3 := bar_index
+    curHiTime3 := time
+    newHi3 := true
+    st3 := 1
+
+if st3 == 1 and os3
+    ll3 := low
+    curLoPx3 := low
+    curLoBar3 := bar_index
+    curLoTime3 := time
+    newLo3 := true
+    st3 := 2
+
+if ob3
+    if high >= hh3
+        hh3 := high
+        curHiPx3 := high
+        curHiBar3 := bar_index
+        curHiTime3 := time
+        movHi3 := true
+    st3 := 1
+
+if os3
+    if low <= ll3
+        ll3 := low
+        curLoPx3 := low
+        curLoBar3 := bar_index
+        curLoTime3 := time
+        movLo3 := true
+    st3 := 2
+
+if st3 == 1 and high >= hh3
+    hh3 := high
+    curHiPx3 := high
+    curHiBar3 := bar_index
+    curHiTime3 := time
+    movHi3 := true
+
+if st3 == 2 and low <= ll3
+    ll3 := low
+    curLoPx3 := low
+    curLoBar3 := bar_index
+    curLoTime3 := time
+    movLo3 := true
+
+var array<float> hiPx3 = array.new_float()
+var array<int> hiBar3 = array.new_int()
+var array<int> hiTime3 = array.new_int()
+var array<float> loPx3 = array.new_float()
+var array<int> loBar3 = array.new_int()
+var array<int> loTime3 = array.new_int()
+
+f_confirmPivot(newLo3, curHiPx3, curHiBar3, curHiTime3, hiPx3, hiBar3, hiTime3)
+f_confirmPivot(newHi3, curLoPx3, curLoBar3, curLoTime3, loPx3, loBar3, loTime3)
+
+[d_fHi7, d_pAHi7, d_tAHi7, d_pBHi7, d_tBHi7, d_fLo7, d_pALo7, d_tALo7, d_pBLo7, d_tBLo7] = request.security(syminfo.tickerid, "D", f_rsiEnginePivots(rsiLen7, rsiOB, rsiOS), barmerge.gaps_off, barmerge.lookahead_off)
+[d_fHi3, d_pAHi3, d_tAHi3, d_pBHi3, d_tBHi3, d_fLo3, d_pALo3, d_tALo3, d_pBLo3, d_tBLo3] = request.security(syminfo.tickerid, "D", f_rsiEnginePivots(rsiLen3, rsiOB, rsiOS), barmerge.gaps_off, barmerge.lookahead_off)
+
+var line loLine7 = na
+var line hiLine7 = na
+var line loLine3 = na
+var line hiLine3 = na
+var array<label> sigLabels = array.new_label()
+var array<label> endLabels = array.new_label()
+var array<line> endHLines = array.new_line()
+var array<label> endHLabels = array.new_label()
+var array<line> bridgeHiLines = array.new_line()
+var array<line> bridgeLoLines = array.new_line()
+
+f_clearLabels(array<label> arr) =>
+    while array.size(arr) > 0
+        oldLb = array.pop(arr)
+        if not na(oldLb)
+            label.delete(oldLb)
+
+f_clearLines(array<line> arr) =>
+    while array.size(arr) > 0
+        oldLn = array.pop(arr)
+        if not na(oldLn)
+            line.delete(oldLn)
+
+f_barListed(int br, array<int> bars) =>
+    bool hit = false
+    if not na(br) and array.size(bars) > 0
+        for i = 0 to array.size(bars) - 1
+            if array.get(bars, i) == br
+                hit := true
+                break
+    hit
+
+f_pushVisiblePt(int br, int tm, float px, array<int> drawn, array<int> outB, array<int> outT, array<float> outP) =>
+    if not na(br) and not na(tm) and not na(px) and br <= bar_index and not f_barListed(br, drawn)
+        array.push(drawn, br)
+        array.push(outB, br)
+        array.push(outT, tm)
+        array.push(outP, px)
+
+f_collectHiVisible(bool showSide, int found, float pA, int tA, int bA, float pB, int tB, int bB, array<float> pxArr, array<int> barArr, array<int> timeArr, float curPx, int curBar, int curTm) =>
+    array<int> drawn = array.new_int()
+    array<int> outB = array.new_int()
+    array<int> outT = array.new_int()
+    array<float> outP = array.new_float()
+    if showSide and found == 2
+        f_pushVisiblePt(bA, tA, pA, drawn, outB, outT, outP)
+        f_pushVisiblePt(bB, tB, pB, drawn, outB, outT, outP)
+        sz = array.size(pxArr)
+        if sz > 0
+            for i = 0 to sz - 1
+                b = array.get(barArr, i)
+                if b <= bar_index and b > bB
+                    px = array.get(pxArr, i)
+                    if f_nearLine(px, b, pA, bA, pB, bB)
+                        f_pushVisiblePt(b, array.get(timeArr, i), px, drawn, outB, outT, outP)
+    if showSide
+        sz = array.size(pxArr)
+        if sz > 0
+            for i = sz - 1 to 0
+                b = array.get(barArr, i)
+                if b <= bar_index
+                    f_pushVisiblePt(b, array.get(timeArr, i), array.get(pxArr, i), drawn, outB, outT, outP)
+                    break
+        if not na(curPx) and not na(curBar) and not na(curTm) and curBar <= bar_index
+            f_pushVisiblePt(curBar, curTm, curPx, drawn, outB, outT, outP)
+    [outB, outT, outP]
+
+f_collectLoVisible(bool showSide, int found, float pA, int tA, int bA, float pB, int tB, int bB, array<float> pxArr, array<int> barArr, array<int> timeArr, float curPx, int curBar, int curTm) =>
+    array<int> drawn = array.new_int()
+    array<int> outB = array.new_int()
+    array<int> outT = array.new_int()
+    array<float> outP = array.new_float()
+    if showSide and found == 2
+        f_pushVisiblePt(bA, tA, pA, drawn, outB, outT, outP)
+        f_pushVisiblePt(bB, tB, pB, drawn, outB, outT, outP)
+        sz = array.size(pxArr)
+        if sz > 0
+            for i = 0 to sz - 1
+                b = array.get(barArr, i)
+                if b <= bar_index and b > bB
+                    px = array.get(pxArr, i)
+                    if f_nearLine(px, b, pA, bA, pB, bB)
+                        f_pushVisiblePt(b, array.get(timeArr, i), px, drawn, outB, outT, outP)
+    if showSide
+        sz = array.size(pxArr)
+        if sz > 0
+            for i = sz - 1 to 0
+                b = array.get(barArr, i)
+                if b <= bar_index
+                    f_pushVisiblePt(b, array.get(timeArr, i), array.get(pxArr, i), drawn, outB, outT, outP)
+                    break
+        if not na(curPx) and not na(curBar) and not na(curTm) and curBar <= bar_index
+            f_pushVisiblePt(curBar, curTm, curPx, drawn, outB, outT, outP)
+    [outB, outT, outP]
+
+f_collectPurpleHiVisible(int found, float pA, int tA, int bA, float pB, int tB, int bB, array<float> pxArr, array<int> barArr, array<int> timeArr, float curPx, int curBar, int curTm) =>
+    f_collectHiVisible(showHigh3, found, pA, tA, bA, pB, tB, bB, pxArr, barArr, timeArr, curPx, curBar, curTm)
+
+f_collectPurpleLoVisible(int found, float pA, int tA, int bA, float pB, int tB, int bB, array<float> pxArr, array<int> barArr, array<int> timeArr, float curPx, int curBar, int curTm) =>
+    f_collectLoVisible(showLow3, found, pA, tA, bA, pB, tB, bB, pxArr, barArr, timeArr, curPx, curBar, curTm)
+
+f_formatGapMs(int ms) =>
+    if na(ms) or ms < 0
+        ""
+    else if ms < 60000
+        str.tostring(math.floor(ms / 1000), "#") + "s"
+    else if ms < 3600000
+        str.tostring(math.floor(ms / 60000), "#") + "m"
+    else if ms < 86400000
+        hrs = math.floor(ms / 3600000)
+        mins = math.floor((ms % 3600000) / 60000)
+        mins > 0 ? str.tostring(hrs, "#") + "h" + str.tostring(mins, "#") + "m" : str.tostring(hrs, "#") + "h"
+    else
+        days = math.floor(ms / 86400000)
+        hrs = math.floor((ms % 86400000) / 3600000)
+        hrs > 0 ? str.tostring(days, "#") + "d" + str.tostring(hrs, "#") + "h" : str.tostring(days, "#") + "d"
+
+f_sortVisiblePts(array<int> outB, array<int> outT, array<float> outP) =>
+    n = array.size(outT)
+    if n > 1
+        for i = 0 to n - 2
+            for j = i + 1 to n - 1
+                if array.get(outT, j) < array.get(outT, i)
+                    tb = array.get(outB, i)
+                    tt = array.get(outT, i)
+                    tp = array.get(outP, i)
+                    array.set(outB, i, array.get(outB, j))
+                    array.set(outT, i, array.get(outT, j))
+                    array.set(outP, i, array.get(outP, j))
+                    array.set(outB, j, tb)
+                    array.set(outT, j, tt)
+                    array.set(outP, j, tp)
+
+f_addOrange(int tBlack, float pBlack, int tPurp, float pPurp, color col, array<line> outArr) =>
+    if not na(tBlack) and not na(tPurp) and not na(pBlack) and not na(pPurp) and tPurp > tBlack
+        ext = extendOrange ? extend.right : extend.none
+        array.push(outArr, line.new(tBlack, pBlack, tPurp, pPurp, xloc=xloc.bar_time, color=col, width=bridgeWidth, extend=ext))
+
+f_drawOrangeHi(float pBlack, int tBlack, array<int> timePurp, array<float> pxPurp, array<line> outArr) =>
+    f_clearLines(outArr)
+    if showBridgeHi and showHigh7 and showHigh3 and not na(pBlack) and not na(tBlack)
+        sz = array.size(timePurp)
+        if sz > 0
+            for i = 0 to sz - 1
+                if i < array.size(pxPurp)
+                    f_addOrange(tBlack, pBlack, array.get(timePurp, i), array.get(pxPurp, i), colBridgeHi, outArr)
+
+f_drawOrangeLo(float pBlack, int tBlack, array<int> timePurp, array<float> pxPurp, array<line> outArr) =>
+    f_clearLines(outArr)
+    if showBridgeLo and showLow7 and showLow3 and not na(pBlack) and not na(tBlack)
+        sz = array.size(timePurp)
+        if sz > 0
+            for i = 0 to sz - 1
+                if i < array.size(pxPurp)
+                    f_addOrange(tBlack, pBlack, array.get(timePurp, i), array.get(pxPurp, i), colBridgeLo, outArr)
+
+f_endBubble(int br, float px, color col, bool isHigh, string txt, array<label> arr, float padMult = 1.0, string gapTxt = "") =>
+    if not na(br) and not na(px) and br <= bar_index
+        off = bar_index - br
+        if off >= 0 and off <= 4999
+            pad = math.max((high[off] - low[off]) * 0.35, close[off] * 0.001) * padMult
+            y = isHigh ? px + pad : px - pad
+            sty = isHigh ? label.style_label_down : label.style_label_up
+            priceTxt = str.tostring(px, format.mintick)
+            tx = str.length(txt) > 0 ? txt : ""
+            if str.length(gapTxt) > 0
+                tx := str.length(tx) > 0 ? tx + "\n" + gapTxt : gapTxt
+            tx := str.length(tx) > 0 ? tx + "\n" + priceTxt : priceTxt
+            lb = label.new(br, y, tx, xloc=xloc.bar_index, yloc=yloc.price, style=sty, color=col, textcolor=color.white, size=size.tiny)
+            array.push(arr, lb)
+
+f_drawGapBubbles(bool showSide, int found, float pA, int tA, int bA, float pB, int tB, int bB, array<float> pxArr, array<int> barArr, array<int> timeArr, float curPx, int curBar, int curTm, color col, bool isHigh, string txt, float padMult, array<label> arr) =>
+    [outB, outT, outP] = if isHigh
+        f_collectHiVisible(showSide, found, pA, tA, bA, pB, tB, bB, pxArr, barArr, timeArr, curPx, curBar, curTm)
+    else
+        f_collectLoVisible(showSide, found, pA, tA, bA, pB, tB, bB, pxArr, barArr, timeArr, curPx, curBar, curTm)
+    f_sortVisiblePts(outB, outT, outP)
+    int prevTm = na
+    n = array.size(outT)
+    if n > 0
+        for i = 0 to n - 1
+            br = array.get(outB, i)
+            px = array.get(outP, i)
+            tm = array.get(outT, i)
+            gapTxt = showBubbleGap and not na(prevTm) ? f_formatGapMs(tm - prevTm) : ""
+            f_endBubble(br, px, col, isHigh, txt, arr, padMult, gapTxt)
+            prevTm := tm
+
+f_tryEndBubble(int br, float px, color col, bool isHigh, string txt, float padMult, array<int> drawn, array<label> arr) =>
+    if not na(br) and not na(px) and not f_barListed(br, drawn)
+        f_endBubble(br, px, col, isHigh, txt, arr, padMult)
+        array.push(drawn, br)
+
+f_reinfBubbles(array<float> pxArr, array<int> barArr, int bClose, float pA, int bA, float pB, int bB, color col, bool isHigh, string txt, float padMult, array<int> drawn, array<label> arr) =>
+    sz = array.size(pxArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            b = array.get(barArr, i)
+            if b <= bar_index and b > bClose
+                px = array.get(pxArr, i)
+                if f_nearLine(px, b, pA, bA, pB, bB)
+                    f_tryEndBubble(b, px, col, isHigh, txt, padMult, drawn, arr)
+
+f_tryLastVisible(array<float> pxArr, array<int> barArr, color col, bool isHigh, string txt, float padMult, array<int> drawn, array<label> arr) =>
+    sz = array.size(pxArr)
+    if sz > 0
+        for i = sz - 1 to 0
+            b = array.get(barArr, i)
+            if b <= bar_index
+                f_tryEndBubble(b, array.get(pxArr, i), col, isHigh, txt, padMult, drawn, arr)
+                break
+
+f_tryCurExtreme(float px, int br, color col, bool isHigh, string txt, float padMult, array<int> drawn, array<label> arr) =>
+    if not na(px) and not na(br) and br <= bar_index
+        f_tryEndBubble(br, px, col, isHigh, txt, padMult, drawn, arr)
+
+f_endHlineTime(int tm, float px, color col, array<line> lnArr, array<label> lbArr) =>
+    if not na(tm) and not na(px)
+        ln = line.new(tm, px, time, px, xloc=xloc.bar_time, color=col, width=1, extend=extend.right)
+        array.push(lnArr, ln)
+        lb = label.new(time, px, str.tostring(px, format.mintick), xloc=xloc.bar_time, yloc=yloc.price, style=label.style_label_left, color=color.new(col, 70), textcolor=color.white, size=size.tiny)
+        array.push(lbArr, lb)
+
+f_txtAtBar(int br, array<int> shorts, array<int> longs) =>
+    string t = ""
+    if array.size(shorts) > 0
+        for i = 0 to array.size(shorts) - 1
+            if array.get(shorts, i) == br
+                t := "SHORT"
+                break
+    if t == "" and array.size(longs) > 0
+        for i = 0 to array.size(longs) - 1
+            if array.get(longs, i) == br
+                t := "LONG"
+                break
+    t
+
+if barstate.islast
+    [tmpLo7, tmpHi7] = f_drawPair(showTradingLines and showLow7, showTradingLines and showHigh7, loPx7, loBar7, loTime7, hiPx7, hiBar7, hiTime7, colLow7, colHigh7, loLine7, hiLine7)
+    loLine7 := tmpLo7
+    hiLine7 := tmpHi7
+    [tmpLo3, tmpHi3] = f_drawPair(showTradingLines and showLow3, showTradingLines and showHigh3, loPx3, loBar3, loTime3, hiPx3, hiBar3, hiTime3, colLow3, colHigh3, loLine3, hiLine3)
+    loLine3 := tmpLo3
+    hiLine3 := tmpHi3
+
+    f_clearLabels(endLabels)
+
+    [fHi7, pAHi7, tAHi7, bAHi7, pBHi7, tBHi7, bBHi7, reinfHi7] = f_resolveLineLeg(hiPx7, hiBar7, hiTime7, false)
+    [fHi3, pAHi3, tAHi3, bAHi3, pBHi3, tBHi3, bBHi3, reinfHi3] = f_resolveLineLeg(hiPx3, hiBar3, hiTime3, false)
+    [fLo7, pALo7, tALo7, bALo7, pBLo7, tBLo7, bBLo7, reinfLo7] = f_resolveLineLeg(loPx7, loBar7, loTime7, false)
+    [fLo3, pALo3, tALo3, bALo3, pBLo3, tBLo3, bBLo3, reinfLo3] = f_resolveLineLeg(loPx3, loBar3, loTime3, false)
+
+    array<int> shortBars = array.new_int()
+    array<int> longBars = array.new_int()
+    int lastSigBar = na
+    bool lastIsShort = false
+    bool lastCancelled = false
+
+    // Signals only on the CURRENT drawn lines (not every historical pivot pair)
+    if showSignals
+        f_clearLabels(sigLabels)
+
+        // Closed pivots only (same as drawn lines). Bubbles through last closed bar.
+        // (pivot tuples already loaded above)
+
+        // Walk only from when BOTH current lines exist, through last closed bar.
+        // Cancel check ONLY on the last lit SHORT/LONG bubble.
+        lastClosed = bar_index - 1
+
+        if lastClosed >= 0
+            if fHi7 == 2 and fHi3 == 2 and not na(bBHi7) and not na(bBHi3) and not na(bAHi7) and not na(bAHi3)
+                // Scan along current line geometry from older pivots (X is often before the newer B)
+                startHi = math.max(bAHi7, bAHi3)
+                startHi := math.min(startHi, lastClosed)
+                float prevDiffHi = na
+                if startHi <= lastClosed
+                    for x = startHi to lastClosed
+                        v7 = f_lineAt(x, fHi7, pAHi7, bAHi7, pBHi7, bBHi7)
+                        v3 = f_lineAt(x, fHi3, pAHi3, bAHi3, pBHi3, bBHi3)
+                        if not na(v7) and not na(v3)
+                            diffHi = v3 - v7
+                            // Black was below purple (diff>0), then black above (diff<=0)
+                            crossedHi = not na(prevDiffHi) and prevDiffHi > 0 and diffHi <= 0
+                            if crossedHi
+                                off = bar_index - x
+                                // SHORT close >= high of first (older) purple high pivot / first bubble point
+                                okShortClose = not na(pAHi3) and off >= 0 and off <= 4999 and close[off] >= pAHi3
+                                if okShortClose
+                                    array.push(shortBars, x)
+                                    if na(lastSigBar) or x >= lastSigBar
+                                        lastSigBar := x
+                                        lastIsShort := true
+                            prevDiffHi := diffHi
+
+            if fLo7 == 2 and fLo3 == 2 and not na(bBLo7) and not na(bBLo3) and not na(bALo7) and not na(bALo3)
+                startLo = math.max(bALo7, bALo3)
+                startLo := math.min(startLo, lastClosed)
+                float prevDiffLo = na
+                if startLo <= lastClosed
+                    for x = startLo to lastClosed
+                        v7 = f_lineAt(x, fLo7, pALo7, bALo7, pBLo7, bBLo7)
+                        v3 = f_lineAt(x, fLo3, pALo3, bALo3, pBLo3, bBLo3)
+                        if not na(v7) and not na(v3)
+                            diffLo = v3 - v7
+                            // Purple low was above black low, then cuts down through it
+                            crossedLo = not na(prevDiffLo) and prevDiffLo > 0 and diffLo <= 0
+                            if crossedLo
+                                off = bar_index - x
+                                // LONG close <= low of first (older) purple low pivot / first bubble point
+                                okLongClose = not na(pALo3) and off >= 0 and off <= 4999 and close[off] <= pALo3
+                                if okLongClose
+                                    array.push(longBars, x)
+                                    if na(lastSigBar) or x >= lastSigBar
+                                        lastSigBar := x
+                                        lastIsShort := false
+                            prevDiffLo := diffLo
+
+            // Cancel only for the last lit bubble — purple first, then black (either cancels)
+            if not na(lastSigBar) and lastSigBar < lastClosed
+                if lastIsShort
+                    bool wasBelowP = false
+                    bool wasBelowB = false
+                    for y = lastSigBar + 1 to lastClosed
+                        vPurp = fHi3 == 2 ? f_lineAt(y, fHi3, pAHi3, bAHi3, pBHi3, bBHi3) : float(na)
+                        vBlack = fHi7 == 2 ? f_lineAt(y, fHi7, pAHi7, bAHi7, pBHi7, bBHi7) : float(na)
+                        offY = bar_index - y
+                        if offY >= 0 and offY <= 4999
+                            cY = close[offY]
+                            hit = false
+                            float vHit = na
+                            if not na(vPurp)
+                                if cY < vPurp
+                                    wasBelowP := true
+                                if wasBelowP and cY > vPurp
+                                    hit := true
+                                    vHit := vPurp
+                            if not hit and not na(vBlack)
+                                if cY < vBlack
+                                    wasBelowB := true
+                                if wasBelowB and cY > vBlack
+                                    hit := true
+                                    vHit := vBlack
+                            if hit and not na(vHit)
+                                lastCancelled := true
+                                padC = math.max((high[offY] - low[offY]) * 0.45, close[offY] * 0.0015)
+                                yCancel = math.max(high[offY], vHit) + padC
+                                lbC = label.new(y, yCancel, "CANCEL\n" + str.tostring(vHit, format.mintick), xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_down, color=colCancel, textcolor=color.white, size=size.small)
+                                array.push(sigLabels, lbC)
+                                break
+                else
+                    bool wasAboveP = false
+                    bool wasAboveB = false
+                    for y = lastSigBar + 1 to lastClosed
+                        vPurp = fLo3 == 2 ? f_lineAt(y, fLo3, pALo3, bALo3, pBLo3, bBLo3) : float(na)
+                        vBlack = fLo7 == 2 ? f_lineAt(y, fLo7, pALo7, bALo7, pBLo7, bBLo7) : float(na)
+                        offY = bar_index - y
+                        if offY >= 0 and offY <= 4999
+                            cY = close[offY]
+                            hit = false
+                            float vHit = na
+                            if not na(vPurp)
+                                if cY > vPurp
+                                    wasAboveP := true
+                                if wasAboveP and cY < vPurp
+                                    hit := true
+                                    vHit := vPurp
+                            if not hit and not na(vBlack)
+                                if cY > vBlack
+                                    wasAboveB := true
+                                if wasAboveB and cY < vBlack
+                                    hit := true
+                                    vHit := vBlack
+                            if hit and not na(vHit)
+                                lastCancelled := true
+                                padC = math.max((high[offY] - low[offY]) * 0.45, close[offY] * 0.0015)
+                                yCancel = math.min(low[offY], vHit) - padC
+                                lbC = label.new(y, yCancel, "CANCEL\n" + str.tostring(vHit, format.mintick), xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_up, color=colCancel, textcolor=color.white, size=size.small)
+                                array.push(sigLabels, lbC)
+                                break
+
+    // Endpoint bubbles: write SHORT/LONG on black+purple ends when signal exists
+    // (not only when signal bar == pivot bar — that almost never matches the cross)
+    hiTxt = ""
+    loTxt = ""
+    if showSignals and not na(lastSigBar)
+        if lastCancelled
+            if lastIsShort
+                hiTxt := "CANCEL"
+            else
+                loTxt := "CANCEL"
+        else if lastIsShort
+            hiTxt := "SHORT"
+        else
+            loTxt := "LONG"
+
+    // Purple bubbles first, black last → black label on top when same bar
+    padBlack = 1.35
+    f_drawGapBubbles(showHigh3, fHi3, pAHi3, tAHi3, bAHi3, pBHi3, tBHi3, bBHi3, hiPx3, hiBar3, hiTime3, curHiPx3, curHiBar3, curHiTime3, colHigh3, true, hiTxt, 1.0, endLabels)
+    f_drawGapBubbles(showLow3, fLo3, pALo3, tALo3, bALo3, pBLo3, tBLo3, bBLo3, loPx3, loBar3, loTime3, curLoPx3, curLoBar3, curLoTime3, colLow3, false, loTxt, 1.0, endLabels)
+    f_drawGapBubbles(showHigh7, fHi7, pAHi7, tAHi7, bAHi7, pBHi7, tBHi7, bBHi7, hiPx7, hiBar7, hiTime7, curHiPx7, curHiBar7, curHiTime7, colHigh7, true, hiTxt, padBlack, endLabels)
+    f_drawGapBubbles(showLow7, fLo7, pALo7, tALo7, bALo7, pBLo7, tBLo7, bBLo7, loPx7, loBar7, loTime7, curLoPx7, curLoBar7, curLoTime7, colLow7, false, loTxt, padBlack, endLabels)
+
+    if fHi7 == 2 and not na(pAHi7) and not na(tAHi7)
+        [_visHiB, visHiT, visHiP] = f_collectPurpleHiVisible(fHi3, pAHi3, tAHi3, bAHi3, pBHi3, tBHi3, bBHi3, hiPx3, hiBar3, hiTime3, curHiPx3, curHiBar3, curHiTime3)
+        f_drawOrangeHi(pAHi7, tAHi7, visHiT, visHiP, bridgeHiLines)
+    else
+        f_clearLines(bridgeHiLines)
+    if fLo7 == 2 and not na(pALo7) and not na(tALo7)
+        [_visLoB, visLoT, visLoP] = f_collectPurpleLoVisible(fLo3, pALo3, tALo3, bALo3, pBLo3, tBLo3, bBLo3, loPx3, loBar3, loTime3, curLoPx3, curLoBar3, curLoTime3)
+        f_drawOrangeLo(pALo7, tALo7, visLoT, visLoP, bridgeLoLines)
+    else
+        f_clearLines(bridgeLoLines)
+
+    // Daily horizontal lines + price labels (only when checkbox on)
+    f_clearLines(endHLines)
+    f_clearLabels(endHLabels)
+    if showEndHlines
+        if showHigh3 and d_fHi3 == 2
+            f_endHlineTime(d_tAHi3, d_pAHi3, colHigh3, endHLines, endHLabels)
+            f_endHlineTime(d_tBHi3, d_pBHi3, colHigh3, endHLines, endHLabels)
+        if showLow3 and d_fLo3 == 2
+            f_endHlineTime(d_tALo3, d_pALo3, colLow3, endHLines, endHLabels)
+            f_endHlineTime(d_tBLo3, d_pBLo3, colLow3, endHLines, endHLabels)
+        if showHigh7 and d_fHi7 == 2
+            f_endHlineTime(d_tAHi7, d_pAHi7, colHigh7, endHLines, endHLabels)
+            f_endHlineTime(d_tBHi7, d_pBHi7, colHigh7, endHLines, endHLabels)
+        if showLow7 and d_fLo7 == 2
+            f_endHlineTime(d_tALo7, d_pALo7, colLow7, endHLines, endHLabels)
+            f_endHlineTime(d_tBLo7, d_pBLo7, colLow7, endHLines, endHLabels)

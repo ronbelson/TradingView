@@ -1,0 +1,12 @@
+TradingView webhook (production) — copy into alert URL:
+
+https://tv-stack-listener.vercel.app/api/tv/webhook?secret=E4IptaPc5lYn88SrQ3qlipTy9NCgkK6I
+
+Dashboard:
+https://tv-stack-listener.vercel.app
+
+Latest:
+https://tv-stack-listener.vercel.app/api/tv/latest
+
+Do NOT use the old project:
+https://tradingview-webhook-tau.vercel.app/api/tradingview-webhook

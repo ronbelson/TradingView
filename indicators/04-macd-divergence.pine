@@ -1,0 +1,192 @@
+// @version=6
+// מחיר עולה + סיגנל יורד + מקאד יורד = דיברגנציה יורדת  |  מחיר יורד + סיגנל עולה + מקאד עולה = דיברגנציה עולה
+// אורכי MACD לפי טיימפריים (ביטקוין): אוטומטי או ידני
+indicator("MACD Divergence Detection", "MACD_Div", max_labels_count = 500)
+
+// Inputs
+float  sourceInput  = input.source(close, "Source")
+bool   autoTfLengths = input.bool(true, "Auto lengths by timeframe", group = "MACD Lengths", tooltip = "Always picks lengths from the BTC table for the closest listed timeframe")
+int    fastLenInput = input.int(12, "Fast length (manual)",   1, group = "MACD Lengths")
+int    slowLenInput = input.int(26, "Slow length (manual)",   1, group = "MACD Lengths")
+int    sigLenInput  = input.int(9,  "Signal length (manual)", 1, group = "MACD Lengths")
+string oscTypeInput = input.string("EMA", "Oscillator MA type", ["EMA", "SMA"], display = display.none)
+string sigTypeInput = input.string("EMA", "Signal MA type",     ["EMA", "SMA"], display = display.none)
+
+// Divergence
+int    divLookback  = input.int(3, "Lookback (bars)", minval=1, maxval=20, group = "Divergence", tooltip = "Bars to compare direction")
+bool   showRatioLine = input.bool(true, "Show MACD/price ratio line", group = "Divergence", tooltip = "Positive=MACD leads, negative=price leads")
+bool   showCrossBubbles = input.bool(true, "Show cross bubbles", group = "Divergence", tooltip = "Bubble with breakout angle %")
+bool   showTable    = input.bool(true, "Show direction table", group = "Divergence", tooltip = "Price/Signal/MACD direction")
+bool   showHistBg   = input.bool(true, "Show histogram zone tint", group = "Divergence", tooltip = "Very subtle green above zero / red below zero")
+
+// טבלת BTC: כל טיימפריים → Fast, Slow, Signal
+// 1M/1W/3D/1D=12,26,9 · 12H=10,24,8 · 6H=10,22,8 · 4H=8,21,5 · 3H=8,20,5 · 2H=8,18,5 · 1H=8,17,5 · 30m=6,15,5 · 15m=5,13,4 · 5m=4,10,3 · 1m=3,8,3
+int chartSec = timeframe.in_seconds()
+int autoFast = 12
+int autoSlow = 26
+int autoSig = 9
+string presetTf = "1D"
+
+if timeframe.ismonthly or chartSec >= 20 * 86400
+    autoFast := 12
+    autoSlow := 26
+    autoSig := 9
+    presetTf := "1M"
+else if timeframe.isweekly or chartSec >= 5 * 86400
+    autoFast := 12
+    autoSlow := 26
+    autoSig := 9
+    presetTf := "1W"
+else if chartSec >= 2 * 86400
+    autoFast := 12
+    autoSlow := 26
+    autoSig := 9
+    presetTf := "3D"
+else if chartSec >= 86400
+    autoFast := 12
+    autoSlow := 26
+    autoSig := 9
+    presetTf := "1D"
+else if chartSec >= 43200
+    autoFast := 10
+    autoSlow := 24
+    autoSig := 8
+    presetTf := "12H"
+else if chartSec >= 21600
+    autoFast := 10
+    autoSlow := 22
+    autoSig := 8
+    presetTf := "6H"
+else if chartSec >= 14400
+    autoFast := 8
+    autoSlow := 21
+    autoSig := 5
+    presetTf := "4H"
+else if chartSec >= 10800
+    autoFast := 8
+    autoSlow := 20
+    autoSig := 5
+    presetTf := "3H"
+else if chartSec >= 7200
+    autoFast := 8
+    autoSlow := 18
+    autoSig := 5
+    presetTf := "2H"
+else if chartSec >= 3600
+    autoFast := 8
+    autoSlow := 17
+    autoSig := 5
+    presetTf := "1H"
+else if chartSec >= 1800
+    autoFast := 6
+    autoSlow := 15
+    autoSig := 5
+    presetTf := "30m"
+else if chartSec >= 900
+    autoFast := 5
+    autoSlow := 13
+    autoSig := 4
+    presetTf := "15m"
+else if chartSec >= 300
+    autoFast := 4
+    autoSlow := 10
+    autoSig := 3
+    presetTf := "5m"
+else
+    autoFast := 3
+    autoSlow := 8
+    autoSig := 3
+    presetTf := "1m"
+
+int fastLen = autoTfLengths ? autoFast : fastLenInput
+int slowLen = autoTfLengths ? autoSlow : slowLenInput
+int sigLen  = autoTfLengths ? autoSig  : sigLenInput
+string lengthsText = autoTfLengths ? (presetTf + " " + str.tostring(fastLen) + "," + str.tostring(slowLen) + "," + str.tostring(sigLen)) : ("man " + str.tostring(fastLen) + "," + str.tostring(slowLen) + "," + str.tostring(sigLen))
+
+// @function    Calculates an EMA or SMA of a `source` series.
+ma(float source, int length, simple string maType) =>
+    switch maType
+        "EMA" => ta.ema(source, length)
+        "SMA" => ta.sma(source, length)
+
+// Calculate MACD
+float maFast = ma(sourceInput, fastLen, oscTypeInput)
+float maSlow = ma(sourceInput, slowLen, oscTypeInput)
+float macd   = maFast - maSlow
+float signal = ma(macd, sigLen, sigTypeInput)
+float hist   = macd - signal
+color hColor = hist >= 0 ? hist > hist[1] ? #26a69a : #b2dfdb : hist > hist[1] ? #ffcdd2 : #ff5252
+
+// ---- מחיר + סיגנל + מקאד - כולם חייבים להתאים ----
+float price = sourceInput
+bool priceRising   = price > price[divLookback]
+bool priceFalling  = price < price[divLookback]
+bool macdRising    = macd > macd[divLookback]
+bool macdFalling   = macd < macd[divLookback]
+bool signalRising  = signal > signal[divLookback]
+bool signalFalling = signal < signal[divLookback]
+
+// דיברגנציה יורדת: מחיר עולה + סיגנל יורד + מקאד יורד
+bool bearishDiv = priceRising and signalFalling and macdFalling
+// דיברגנציה עולה: מחיר יורד + סיגנל עולה + מקאד עולה
+bool bullishDiv = priceFalling and signalRising and macdRising
+
+// קו היחס מקאד/מחיר: הפרש מנורמל (כששניהם 0-1, ההפרש מראה מי מוביל)
+// ערך חיובי = מקאד חזק יותר מהמחיר | ערך שלילי = מחיר מוביל (דיברגנציה יורדת)
+int normLookback = 50
+float macdMin = ta.lowest(macd, normLookback)
+float macdMax = ta.highest(macd, normLookback)
+float macdRange = math.max(macdMax - macdMin, 0.0001)
+float priceMin = ta.lowest(price, normLookback)
+float priceMax = ta.highest(price, normLookback)
+float priceRange = math.max(priceMax - priceMin, 0.0001)
+float macdNorm = (macd - macdMin) / macdRange
+float priceNorm = (price - priceMin) / priceRange
+float ratioDiff = macdNorm - priceNorm   // -1 ל-1: שלילי = מחיר מוביל (דיברגנציה יורדת)
+float ratioScaled = macdMin + (ratioDiff + 1) / 2 * macdRange  // להצגה בסקלת MACD
+
+// ---- חיתוך מקאד/יחס – זיהוי + אחוז זווית הפריצה ----
+bool crossDown = macd[1] >= ratioScaled[1] and macd < ratioScaled   // מקאד חותך מלמעלה למטה
+bool crossUp   = macd[1] <= ratioScaled[1] and macd > ratioScaled   // מקאד חותך מלמטה למעלה
+float slopeDiff = (macd - macd[1]) - (ratioScaled - ratioScaled[1])
+float strengthRaw = math.abs(slopeDiff)
+float strengthRef = math.max(macdRange / 15, 0.0001)
+int strengthPct = math.min(100, math.round(strengthRaw / strengthRef * 100))
+
+if showCrossBubbles and (crossDown or crossUp)
+    string dir = crossDown ? "↓" : "↑"
+    string pctText = str.tostring(strengthPct) + "%"
+    float crossY = (macd + ratioScaled) / 2
+    label.new(bar_index, crossY, pctText + " " + dir, style = crossDown ? label.style_label_up : label.style_label_down, color = crossDown ? color.orange : color.teal, textcolor = color.white, size = size.tiny)
+
+// Table: Price / Signal / MACD direction + active lengths
+var table t = table.new(position.top_right, 2, 5, bgcolor = color.new(#1e222d, 80))
+if showTable
+    table.cell(t, 0, 0, "Lengths", text_color = color.white, text_size = size.small)
+    table.cell(t, 1, 0, lengthsText, text_color = color.aqua, text_size = size.small)
+    table.cell(t, 0, 1, "Price", text_color = color.white, text_size = size.small)
+    table.cell(t, 1, 1, priceRising ? "Rising ↑" : "Falling ↓", text_color = priceRising ? color.green : color.red, text_size = size.small)
+    table.cell(t, 0, 2, "Signal", text_color = color.white, text_size = size.small)
+    table.cell(t, 1, 2, signalRising ? "Rising ↑" : "Falling ↓", text_color = signalRising ? color.green : color.red, text_size = size.small)
+    table.cell(t, 0, 3, "MACD", text_color = color.white, text_size = size.small)
+    table.cell(t, 1, 3, macdRising ? "Rising ↑" : "Falling ↓", text_color = macdRising ? color.green : color.red, text_size = size.small)
+    table.cell(t, 0, 4, "Divergence", text_color = color.white, text_size = size.small)
+    string divText = bearishDiv ? "Bearish" : bullishDiv ? "Bullish" : "—"
+    color divBg = bearishDiv ? color.orange : bullishDiv ? color.teal : color.gray
+    table.cell(t, 1, 4, divText, text_color = color.white, bgcolor = divBg, text_size = size.small)
+
+// Plot
+hline(0, "Zero", #787b8680)
+plot(hist, "Histogram", hColor, style = plot.style_columns)
+plot(macd, "MACD", color = #2962FF, linewidth = 2, style = plot.style_line)
+plot(signal, "Signal line", #ff6d00, linewidth = 1, style = plot.style_line)
+plot(showRatioLine ? ratioScaled : na, "MACD/Price ratio", color = #9C27B0, linewidth = 2, style = plot.style_line)
+
+// רקע עדין: ירוק מעל האפס (היסטוגרם חיובי) · אדום מתחת לאפס (היסטוגרם שלילי)
+bgcolor(showHistBg ? (hist >= 0 ? color.new(#26a69a, 94) : color.new(#ef5350, 94)) : na, title = "Histogram zone tint")
+
+// Alerts
+alertcondition(hist[1] >= 0 and hist < 0, "Rising to falling", "MACD histogram switched from a rising to falling state")
+alertcondition(hist[1] <= 0 and hist > 0, "Falling to rising", "MACD histogram switched from a falling to rising state")
+alertcondition(bearishDiv, "Bearish Divergence", "Price rising + Signal falling + MACD falling")
+alertcondition(bullishDiv, "Bullish Divergence", "Price falling + Signal rising + MACD rising")

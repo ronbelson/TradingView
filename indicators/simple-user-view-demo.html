@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC CHEF · תצוגה פשוטה</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --card: #121820;
+      --text: #e8eef5;
+      --muted: #8b97a8;
+      --green: #3ecf8e;
+      --red: #ff6b6b;
+      --yellow: #f0c14b;
+      --line: #243041;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding: 20px 16px 48px;
+    }
+    .wrap { max-width: 420px; margin: 0 auto; }
+    h1 { font-size: 18px; margin: 0 0 4px; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 14px 12px;
+      margin-bottom: 12px;
+    }
+    .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .big { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .pill {
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .pill.up { background: #163528; color: var(--green); }
+    .pill.down { background: #3a1d1d; color: var(--red); }
+    .pill.wait { background: #2a2618; color: var(--yellow); }
+    .odds-row {
+      display: grid;
+      grid-template-columns: 72px 1fr 48px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 14px;
+    }
+    .odds-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #1a222d;
+      overflow: hidden;
+      direction: ltr;
+    }
+    .odds-fill { display: block; height: 100%; border-radius: 999px; }
+    .odds-fill.u { background: var(--green); }
+    .odds-fill.d { background: var(--red); }
+    .odds-fill.c { background: var(--yellow); }
+    .tf {
+      display: grid;
+      grid-template-columns: 64px 1fr 56px;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+    .tf:last-child { border-bottom: 0; }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      display: inline-block; margin-left: 6px;
+    }
+    .dot.g { background: var(--green); }
+    .dot.r { background: var(--red); }
+    .dot.y { background: var(--yellow); }
+    .ladder { font-size: 14px; }
+    .ladder .lvl {
+      display: flex; justify-content: space-between;
+      padding: 7px 0; border-bottom: 1px dashed #1e2834;
+    }
+    .ladder .now {
+      background: #243018;
+      border: 1px solid #3d4f22;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      font-weight: 800;
+      color: var(--yellow);
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    .story { font-size: 15px; }
+    .nums { font-variant-numeric: tabular-nums; }
+    .good { color: var(--green); font-weight: 700; }
+    .bad { color: var(--red); font-weight: 700; }
+    .decision {
+      font-size: 22px; font-weight: 800; margin: 4px 0 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>BTC CHEF</h1>
+    <div class="sub">תצוגה פשוטה · דמו מנתוני הסיפור</div>
+
+    <div class="card">
+      <div class="label">מחיר עכשיו</div>
+      <div class="big nums">64,671</div>
+    </div>
+
+    <div class="card">
+      <div class="label">מה קורה עכשיו</div>
+      <div class="story">
+        למעלה הזמנים הארוכים עדיין לוחצים למטה.
+        למטה רבע שעה וחצי שעה כבר מנסים לעלות.
+        ארבע שעות באמצע. עדיין לא הכריעו.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">האם זאת כניסה</div>
+      <div class="decision" style="color: var(--yellow)">חכה רגע</div>
+      <div class="muted">
+        לא לרוץ עכשיו בעיניים עצומות.
+        אם נשארים מעל 64,599 ויש המשך ירוק בחצי שעה. אפשר לונג קצר.
+        אם נופלים מתחת 64,507. הכניסה הזו בוטלה.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">אם נכנסים לונג מכאן</div>
+      <div class="row" style="margin-bottom: 10px">
+        <div>
+          <div class="label">כניסה</div>
+          <div class="nums">64,671</div>
+        </div>
+        <div>
+          <div class="label">יעד</div>
+          <div class="nums good">64,827</div>
+        </div>
+        <div>
+          <div class="label">יציאה בסטופ</div>
+          <div class="nums bad">64,414</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="pill up">רווח +0.24%</div>
+        <div class="pill down">הפסד −0.40%</div>
+      </div>
+      <div class="muted" style="margin-top: 8px">יעד הבא אחרי זה: 64,940</div>
+    </div>
+
+    <div class="card">
+      <div class="label">מה יותר סביר מכאן</div>
+      <div class="odds-row">
+        <span>עלייה</span>
+        <div class="odds-track"><span class="odds-fill u" style="width:58%"></span></div>
+        <span class="nums">58%</span>
+      </div>
+      <div class="odds-row">
+        <span>ירידה</span>
+        <div class="odds-track"><span class="odds-fill d" style="width:28%"></span></div>
+        <span class="nums">28%</span>
+      </div>
+      <div class="odds-row">
+        <span>המתנה</span>
+        <div class="odds-track"><span class="odds-fill c" style="width:14%"></span></div>
+        <span class="nums">14%</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">הבדל בין הזמנים</div>
+      <div class="tf"><span>שבוע</span><span>לוחץ למטה</span><span><i class="dot r"></i>אדום</span></div>
+      <div class="tf"><span>3 ימים</span><span>לוחץ למטה</span><span><i class="dot r"></i>אדום</span></div>
+      <div class="tf"><span>יום</span><span>עדיין למטה. מאט</span><span><i class="dot r"></i>אדום</span></div>
+      <div class="tf"><span>4 שעות</span><span>באמצע</span><span><i class="dot y"></i>צהוב</span></div>
+      <div class="tf"><span>2 שעות</span><span>לוחץ למטה</span><span><i class="dot r"></i>אדום</span></div>
+      <div class="tf"><span>שעה</span><span>מתחיל לעלות</span><span><i class="dot g"></i>ירוק</span></div>
+      <div class="tf"><span>חצי שעה</span><span>עולה</span><span><i class="dot g"></i>ירוק</span></div>
+      <div class="tf"><span>רבע שעה</span><span>עולה</span><span><i class="dot g"></i>ירוק</span></div>
+    </div>
+
+    <div class="card ladder">
+      <div class="label">לאן אפשר ללכת</div>
+      <div class="lvl"><span class="muted">למעלה</span><span class="nums">65,139</span></div>
+      <div class="lvl"><span class="muted">למעלה</span><span class="nums">64,940</span></div>
+      <div class="lvl"><span class="muted">יעד קרוב</span><span class="nums good">64,827</span></div>
+      <div class="now">עכשיו 64,671</div>
+      <div class="lvl"><span class="muted">סטופ קרוב</span><span class="nums bad">64,599</span></div>
+      <div class="lvl"><span class="muted">למטה</span><span class="nums">64,414</span></div>
+      <div class="lvl"><span class="muted">למטה</span><span class="nums">64,293</span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">מה השתנה לאחרונה</div>
+      <div class="muted">
+        היה ניסיון עלייה עד 64,827.
+        חזרו קצת למטה.
+        עכשיו שוב מנסים את אותה נקודה.
+      </div>
+    </div>
+
+    <div class="muted" style="text-align:center; margin-top: 8px">
+      דמו בלבד. לא ייעוץ השקעות.
+    </div>
+  </div>
+</body>
+</html>

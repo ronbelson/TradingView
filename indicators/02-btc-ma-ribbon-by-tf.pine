@@ -1,0 +1,360 @@
+//@version=6
+indicator("BTC MA + Ribbon by TF (Bull/Bear)", overlay=true, max_labels_count=100)
+
+// ═══════════════════════════════════════════
+// מצב שוק
+// ═══════════════════════════════════════════
+gRegime = "מצב שוק"
+isBull = input.bool(false, "שוק שורי (Bull)", group=gRegime,
+     tooltip="כבוי = שוק דובי (ברירת מחדל).\nשורי: דגש ויזואלי על ממוצעים מהירים (קווים עבים יותר).\nדובי: דגש על ממוצעים איטיים — איפה עליות נבלמות.")
+showInfo = input.bool(true, "הצג תווית מצב", group=gRegime,
+     tooltip="טבלה בפינה: טיימפריים, מצב שורי/דובי, אורכי הממוצעים, מצב ה-Ribbon.")
+
+// ═══════════════════════════════════════════
+// צבעים
+// ═══════════════════════════════════════════
+gColors = "צבעים"
+colFastBull = input.color(color.new(#00E676, 0), "מהיר — שורי", group=gColors, tooltip="צבע הממוצע המהיר כשמצב השוק = שורי.")
+colMidBull  = input.color(color.new(#FFD600, 0), "בינוני — שורי", group=gColors, tooltip="צבע הממוצע הבינוני כשמצב השוק = שורי.")
+colSlowBull = input.color(color.new(#2979FF, 0), "איטי — שורי", group=gColors, tooltip="צבע הממוצע האיטי כשמצב השוק = שורי.")
+colXBull    = input.color(color.new(#AA00FF, 0), "איטי נוסף — שורי", group=gColors, tooltip="צבע SMA 200 (יומי) / SMA 300 (שבועי) כשמצב השוק = שורי.")
+colYBull    = input.color(color.new(#80D8FF, 0), "איטי 300 — שורי", group=gColors, tooltip="צבע SMA 300 (יומי) כשמצב השוק = שורי.")
+colFastBear = input.color(color.new(#FF8A80, 0), "מהיר — דובי", group=gColors, tooltip="צבע הממוצע המהיר כשמצב השוק = דובי.")
+colMidBear  = input.color(color.new(#FFAB40, 0), "בינוני — דובי", group=gColors, tooltip="צבע הממוצע הבינוני כשמצב השוק = דובי.")
+colSlowBear = input.color(color.new(#FF1744, 0), "איטי — דובי", group=gColors, tooltip="צבע הממוצע האיטי כשמצב השוק = דובי.")
+colXBear    = input.color(color.new(#CE93D8, 0), "איטי נוסף — דובי", group=gColors, tooltip="צבע SMA 200 (יומי) / SMA 300 (שבועי) כשמצב השוק = דובי.")
+colYBear    = input.color(color.new(#B39DDB, 0), "איטי 300 — דובי", group=gColors, tooltip="צבע SMA 300 (יומי) כשמצב השוק = דובי.")
+
+colFast = isBull ? colFastBull : colFastBear
+colMid  = isBull ? colMidBull  : colMidBear
+colSlow = isBull ? colSlowBull : colSlowBear
+colX    = isBull ? colXBull    : colXBear
+colY    = isBull ? colYBull    : colYBear
+
+wFast = isBull ? 3 : 1
+wMid  = 2
+wSlow = isBull ? 1 : 3
+wX    = isBull ? 1 : 3
+wY    = isBull ? 1 : 3
+
+// ═══════════════════════════════════════════
+// הצגה
+// ═══════════════════════════════════════════
+gShow = "הצגה"
+showFast = input.bool(true, "הצג ממוצע מהיר", group=gShow, tooltip="מציג/מסתיר את הממוצע המהיר של הטיימפריים הנוכחי (למשל EMA 9 / EMA 20).")
+showMid  = input.bool(true, "הצג ממוצע בינוני", group=gShow, tooltip="מציג/מסתיר ממוצע בינוני כשיש כזה (למשל EMA 20 ביומי, EMA 21 ב-3D).")
+showSlow = input.bool(true, "הצג ממוצע איטי", group=gShow, tooltip="מציג/מסתיר את הממוצע האיטי (למשל EMA 50 / SMA 200 בשבועי).")
+showX    = input.bool(true, "הצג ממוצע איטי נוסף", group=gShow, tooltip="מציג/מסתיר ממוצע נוסף — שבועי: SMA 300 · יומי: SMA 200.")
+showY    = input.bool(true, "הצג SMA 300 (יומי)", group=gShow, tooltip="מציג/מסתיר SMA 300 בגרף יומי.")
+
+// ═══════════════════════════════════════════
+// ממוצעים לפי טיימפריים
+// ═══════════════════════════════════════════
+gW = "שבועי · EMA20 / SMA200 / SMA300"
+wShow = input.bool(true, "פעיל", group=gW, tooltip="כשכבוי — בגרף שבועי לא יוצגו ממוצעי המאקרו האלה.")
+wFastLen = input.int(20,  "מהיר (EMA)", minval=1, group=gW, tooltip="EMA 20 שבועי — רצפת המאקרו בשוק שורי. סגירה מתחתיו = אזהרה.")
+wSlowLen = input.int(200, "איטי (SMA)", minval=1, group=gW, tooltip="SMA 200 שבועי — רצפת קנייה אולטימטיבית בשוק דובי / תחתית מחזור.")
+wXLen    = input.int(300, "איטי נוסף (SMA)", minval=1, group=gW, tooltip="SMA 300 שבועי — ממוצע מאקרו ארוך נוסף (ניתן לכיבוי בהצגה).")
+
+g3D = "3 ימים · EMA9 / EMA21 / SMA50 (בלי Ribbon)"
+d3Show = input.bool(true, "פעיל", group=g3D, tooltip="3D מסנן רעש בין יומי לשבועי. מומלץ בלי Ribbon.")
+d3FastLen = input.int(9,  "מהיר (EMA)", minval=1, group=g3D, tooltip="EMA 9 — מומנטום. מעל EMA 21 = חיובי, מתחת = שלילי.")
+d3MidLen  = input.int(21, "בינוני (EMA)", minval=1, group=g3D, tooltip="EMA 21 — קו ההתייחסות למומנטום מול ה-EMA 9.")
+d3SlowLen = input.int(50, "איטי (SMA)", minval=1, group=g3D, tooltip="SMA 50 — בתיקון עמוק: תמיכה (שורי) או התנגדות קשיחה (דובי).")
+
+gD = "יומי · EMA9 / EMA20 / EMA50 / SMA200 / SMA300"
+dShow = input.bool(true, "פעיל", group=gD, tooltip="ממוצעי סווינג יומיים.")
+dFastLen = input.int(9,   "מהיר (EMA)", minval=1, group=gD, tooltip="EMA 9 יומי — רכיבה על מומנטום בשוק שורי.")
+dMidLen  = input.int(20,  "בינוני (EMA)", minval=1, group=gD, tooltip="EMA 20 יומי — תמיכה קרובה / קו מגמה קצר.")
+dSlowLen = input.int(50,  "איטי (EMA)", minval=1, group=gD, tooltip="EMA 50 יומי — אזור איסוף (Dips) בשוק שורי · התנגדות בשוק דובי.")
+dXLen    = input.int(200, "איטי נוסף (SMA)", minval=1, group=gD, tooltip="SMA 200 יומי — תקרת מאקרו בשוק דובי · אישור מגמה ארוכה.")
+dYLen    = input.int(300, "SMA 300", minval=1, group=gD, tooltip="SMA 300 יומי — ממוצע מאקרו ארוך נוסף (ניתן לכיבוי בהצגה).")
+
+g4H = "4 שעות · EMA10 / EMA50 / SMA200"
+h4Show = input.bool(true, "פעיל", group=g4H, tooltip="סווינג קצר ב-4H.")
+h4FastLen = input.int(10,  "מהיר (EMA)", minval=1, group=g4H, tooltip="EMA 10 — מומנטום מקומי ב-4H.")
+h4MidLen  = input.int(50,  "בינוני (EMA)", minval=1, group=g4H, tooltip="EMA 50 — בלימת זינוקים (דובי) או דחיפה (שורי).")
+h4SlowLen = input.int(200, "איטי (SMA)", minval=1, group=g4H, tooltip="SMA 200 ב-4H — תמיכה מקומית (שורי) או תקרה מקומית (דובי).")
+
+g1H = "שעה · EMA9 / EMA50"
+h1Show = input.bool(true, "פעיל", group=g1H, tooltip="מסחר תוך-יומי בשעה.")
+h1FastLen = input.int(9,  "מהיר (EMA)", minval=1, group=g1H, tooltip="EMA 9 — פריצות קצרות תוך-יומיות.")
+h1SlowLen = input.int(50, "איטי (EMA)", minval=1, group=g1H, tooltip="EMA 50 — אישור מגמה תוך-יומית. מעל = לונג · מתחת = שורט.")
+
+g30M = "חצי שעה · EMA9 / EMA50"
+m30Show = input.bool(true, "פעיל", group=g30M, tooltip="סקאלפינג / תזמון כניסה מדויק.")
+m30FastLen = input.int(9,  "מהיר (EMA)", minval=1, group=g30M, tooltip="EMA 9 — תגובה מהירה מאוד.")
+m30SlowLen = input.int(50, "איטי (EMA)", minval=1, group=g30M, tooltip="EMA 50 — קרקוע מגמה מקומית קצרה.")
+
+gO = "אחר"
+oFastLen = input.int(9,  "מהיר (EMA)", minval=1, group=gO, tooltip="ברירת מחדל לטיימפריים שלא ברשימה.")
+oMidLen  = input.int(20, "בינוני (EMA)", minval=1, group=gO, tooltip="ברירת מחדל לטיימפריים שלא ברשימה.")
+oSlowLen = input.int(50, "איטי (EMA)", minval=1, group=gO, tooltip="ברירת מחדל לטיימפריים שלא ברשימה.")
+
+// ═══════════════════════════════════════════
+// Ribbon
+// ═══════════════════════════════════════════
+gRib = "Ribbon · כללי"
+showRibbon = input.bool(true, "הצג Ribbon", group=gRib,
+     tooltip="סרט ממוצעי EMA — מציג זרימת מומנטום.\nהאורכים נבחרים אוטומטית לפי הטיימפריים.")
+ribSrc = input.source(close, "מקור", group=gRib, tooltip="מחיר לחישוב ה-EMA של הריבון. בדרך כלל Close.")
+showRibSignals = input.bool(true, "הצג Expansion / Squeeze / Twist", group=gRib,
+     tooltip="• Expansion: הסרט רחב — מגמה חזקה (רקע ירוק/אדום עדין).\n• Squeeze: הסרט דחוס — מומנטום נחלש, לרוב לפני פיצוץ (רקע צהוב).\n• Twist: הממוצע הקצר חוצה את הארוך — היפוך צבע/כיוון (יהלום TW).")
+squeezePct = input.float(0.35, "סף Squeeze (% מהמחיר)", minval=0.05, step=0.05, group=gRib,
+     tooltip="אם רוחב הריבון (קצר−ארוך) ביחס למחיר קטן מהסף — מסומן Squeeze.")
+expandPct  = input.float(1.5,  "סף Expansion (% מהמחיר)", minval=0.1, step=0.1, group=gRib,
+     tooltip="אם רוחב הריבון ביחס למחיר גדול מהסף — מסומן Expansion (מגמה חזקה). אל תסחור נגד ההתרחבות.")
+
+gRibW = "Ribbon · שבועי (מאקרו)"
+wRibOn = input.bool(true, "פעיל", group=gRibW, tooltip="ריבון מאקרו: רצפת בטון בשוק שורי · תקרה בשוק דובי.")
+wR1 = input.int(20, "EMA 1", minval=1, group=gRibW, tooltip="הקצה הקצר של ריבון שבועי.")
+wR2 = input.int(25, "EMA 2", minval=1, group=gRibW, tooltip="שכבה בריבון השבועי.")
+wR3 = input.int(30, "EMA 3", minval=1, group=gRibW, tooltip="שכבה בריבון השבועי.")
+wR4 = input.int(35, "EMA 4", minval=1, group=gRibW, tooltip="שכבה בריבון השבועי.")
+wR5 = input.int(40, "EMA 5", minval=1, group=gRibW, tooltip="שכבה בריבון השבועי.")
+wR6 = input.int(45, "EMA 6", minval=1, group=gRibW, tooltip="שכבה בריבון השבועי.")
+wR7 = input.int(50, "EMA 7", minval=1, group=gRibW, tooltip="הקצה הארוך של ריבון שבועי.")
+
+gRibD = "Ribbon · יומי / 4H (פיבונאצ'י)"
+dRibOn = input.bool(true, "פעיל", group=gRibD, tooltip="ריבון פיבונאצ'י לסווינג. שורי: כניסה לסרט = אזור לונג. דובי: זינוק לסרט = אזור שורט.")
+dR1 = input.int(8,  "EMA 1", minval=1, group=gRibD, tooltip="פיבו — קצה קצר.")
+dR2 = input.int(13, "EMA 2", minval=1, group=gRibD, tooltip="פיבו.")
+dR3 = input.int(21, "EMA 3", minval=1, group=gRibD, tooltip="פיבו.")
+dR4 = input.int(34, "EMA 4", minval=1, group=gRibD, tooltip="פיבו.")
+dR5 = input.int(55, "EMA 5", minval=1, group=gRibD, tooltip="פיבו — קצה ארוך.")
+
+gRibI = "Ribbon · 1H / 30M (תוך-יומי)"
+iRibOn = input.bool(true, "פעיל", group=gRibI, tooltip="ריבון מהיר לגלי מומנטום קצרים / סקאלפינג.")
+iR1 = input.int(5,  "EMA 1", minval=1, group=gRibI, tooltip="קצה קצר תוך-יומי.")
+iR2 = input.int(10, "EMA 2", minval=1, group=gRibI, tooltip="שכבה תוך-יומית.")
+iR3 = input.int(15, "EMA 3", minval=1, group=gRibI, tooltip="שכבה תוך-יומית.")
+iR4 = input.int(20, "EMA 4", minval=1, group=gRibI, tooltip="שכבה תוך-יומית.")
+iR5 = input.int(25, "EMA 5", minval=1, group=gRibI, tooltip="שכבה תוך-יומית.")
+iR6 = input.int(30, "EMA 6", minval=1, group=gRibI, tooltip="קצה ארוך תוך-יומי.")
+
+gRib3 = "Ribbon · 3D"
+d3RibOn = input.bool(false, "פעיל (לא מומלץ — עומס)", group=gRib3,
+     tooltip="במדריך: לא נהוג ריבון ב-3D — יוצר עומס. כבוי כברירת מחדל.")
+d3R1 = input.int(9,  "EMA 1", minval=1, group=gRib3, tooltip="רק אם מפעילים ריבון ב-3D.")
+d3R2 = input.int(13, "EMA 2", minval=1, group=gRib3, tooltip="רק אם מפעילים ריבון ב-3D.")
+d3R3 = input.int(21, "EMA 3", minval=1, group=gRib3, tooltip="רק אם מפעילים ריבון ב-3D.")
+d3R4 = input.int(34, "EMA 4", minval=1, group=gRib3, tooltip="רק אם מפעילים ריבון ב-3D.")
+d3R5 = input.int(50, "EMA 5", minval=1, group=gRib3, tooltip="רק אם מפעילים ריבון ב-3D.")
+
+gRibC = "Ribbon · צבעים"
+ribBullFill = input.color(color.new(#00C853, 90), "מילוי שורי", group=gRibC, tooltip="מילוי הסרט כשה-EMA הקצר מעל הארוך (Ribbon Bullish).")
+ribBearFill = input.color(color.new(#FF1744, 90), "מילוי דובי", group=gRibC, tooltip="מילוי הסרט כשה-EMA הקצר מתחת לארוך (Ribbon Bearish).")
+ribBullLine = input.color(color.new(#00E676, 40), "קווים שורי", group=gRibC, tooltip="צבע קווי הריבון במצב שורי.")
+ribBearLine = input.color(color.new(#FF5252, 40), "קווים דובי", group=gRibC, tooltip="צבע קווי הריבון במצב דובי.")
+
+// ═══════════════════════════════════════════
+// זיהוי TF
+// ═══════════════════════════════════════════
+isWeekly = timeframe.isweekly
+is3D     = timeframe.period == "3D"
+isDaily  = timeframe.isdaily
+is4H     = timeframe.period == "240"
+is1H     = timeframe.period == "60"
+is30M    = timeframe.period == "30"
+isIntra  = is1H or is30M
+isSwing  = isDaily or is4H
+
+tfOk =
+     (isWeekly and wShow) or
+     (is3D and d3Show) or
+     (isDaily and dShow) or
+     (is4H and h4Show) or
+     (is1H and h1Show) or
+     (is30M and m30Show) or
+     (not isWeekly and not is3D and not isDaily and not is4H and not is1H and not is30M)
+
+int lenFast = na
+int lenMid  = na
+int lenSlow = na
+int lenX    = na
+int lenY    = na
+int typFast = 0
+int typMid  = 0
+int typSlow = 0
+int typX    = 0
+int typY    = 0
+
+if isWeekly and wShow
+    lenFast := wFastLen
+    typFast := 1
+    lenSlow := wSlowLen
+    typSlow := 2
+    lenX    := wXLen
+    typX    := 2
+else if is3D and d3Show
+    lenFast := d3FastLen
+    typFast := 1
+    lenMid  := d3MidLen
+    typMid  := 1
+    lenSlow := d3SlowLen
+    typSlow := 2
+else if isDaily and dShow
+    lenFast := dFastLen
+    typFast := 1
+    lenMid  := dMidLen
+    typMid  := 1
+    lenSlow := dSlowLen
+    typSlow := 1
+    lenX    := dXLen
+    typX    := 2
+    lenY    := dYLen
+    typY    := 2
+else if is4H and h4Show
+    lenFast := h4FastLen
+    typFast := 1
+    lenMid  := h4MidLen
+    typMid  := 1
+    lenSlow := h4SlowLen
+    typSlow := 2
+else if is1H and h1Show
+    lenFast := h1FastLen
+    typFast := 1
+    lenSlow := h1SlowLen
+    typSlow := 1
+else if is30M and m30Show
+    lenFast := m30FastLen
+    typFast := 1
+    lenSlow := m30SlowLen
+    typSlow := 1
+else if tfOk
+    lenFast := oFastLen
+    typFast := 1
+    lenMid  := oMidLen
+    typMid  := 1
+    lenSlow := oSlowLen
+    typSlow := 1
+
+calcMa(float src, int len, int typ) =>
+    typ == 1 ? ta.ema(src, len) : typ == 2 ? ta.sma(src, len) : na
+
+maFast = not na(lenFast) and typFast != 0 ? calcMa(close, lenFast, typFast) : na
+maMid  = not na(lenMid)  and typMid  != 0 ? calcMa(close, lenMid,  typMid)  : na
+maSlow = not na(lenSlow) and typSlow != 0 ? calcMa(close, lenSlow, typSlow) : na
+maX    = not na(lenX)    and typX    != 0 ? calcMa(close, lenX,    typX)    : na
+maY    = not na(lenY)    and typY    != 0 ? calcMa(close, lenY,    typY)    : na
+
+plot(showFast and not na(maFast) ? maFast : na, "MA Fast",  color=colFast, linewidth=wFast)
+plot(showMid  and not na(maMid)  ? maMid  : na, "MA Mid",   color=colMid,  linewidth=wMid)
+plot(showSlow and not na(maSlow) ? maSlow : na, "MA Slow",  color=colSlow, linewidth=wSlow)
+plot(showX    and not na(maX)    ? maX    : na, "MA Extra", color=colX,    linewidth=wX)
+plot(showY    and not na(maY)    ? maY    : na, "MA 300",   color=colY,    linewidth=wY)
+
+int nRib = 0
+int L1 = na
+int L2 = na
+int L3 = na
+int L4 = na
+int L5 = na
+int L6 = na
+int L7 = na
+bool ribActive = false
+
+if isWeekly and wRibOn
+    ribActive := true
+    nRib := 7
+    L1 := wR1
+    L2 := wR2
+    L3 := wR3
+    L4 := wR4
+    L5 := wR5
+    L6 := wR6
+    L7 := wR7
+else if isSwing and dRibOn
+    ribActive := true
+    nRib := 5
+    L1 := dR1
+    L2 := dR2
+    L3 := dR3
+    L4 := dR4
+    L5 := dR5
+else if isIntra and iRibOn
+    ribActive := true
+    nRib := 6
+    L1 := iR1
+    L2 := iR2
+    L3 := iR3
+    L4 := iR4
+    L5 := iR5
+    L6 := iR6
+else if is3D and d3RibOn
+    ribActive := true
+    nRib := 5
+    L1 := d3R1
+    L2 := d3R2
+    L3 := d3R3
+    L4 := d3R4
+    L5 := d3R5
+
+drawRib = showRibbon and ribActive
+
+e1 = not na(L1) ? ta.ema(ribSrc, L1) : na
+e2 = not na(L2) ? ta.ema(ribSrc, L2) : na
+e3 = not na(L3) ? ta.ema(ribSrc, L3) : na
+e4 = not na(L4) ? ta.ema(ribSrc, L4) : na
+e5 = not na(L5) ? ta.ema(ribSrc, L5) : na
+e6 = not na(L6) ? ta.ema(ribSrc, L6) : na
+e7 = not na(L7) ? ta.ema(ribSrc, L7) : na
+
+eShort = e1
+eLong  = nRib == 7 ? e7 : nRib == 6 ? e6 : e5
+ribBullish = not na(eShort) and not na(eLong) and eShort > eLong
+ribLineCol = ribBullish ? ribBullLine : ribBearLine
+ribFillCol = ribBullish ? ribBullFill : ribBearFill
+
+p1 = plot(drawRib and nRib >= 1 ? e1 : na, "Rib 1", color=ribLineCol, linewidth=1)
+p2 = plot(drawRib and nRib >= 2 ? e2 : na, "Rib 2", color=ribLineCol, linewidth=1)
+p3 = plot(drawRib and nRib >= 3 ? e3 : na, "Rib 3", color=ribLineCol, linewidth=1)
+p4 = plot(drawRib and nRib >= 4 ? e4 : na, "Rib 4", color=ribLineCol, linewidth=1)
+p5 = plot(drawRib and nRib >= 5 ? e5 : na, "Rib 5", color=ribLineCol, linewidth=1)
+p6 = plot(drawRib and nRib >= 6 ? e6 : na, "Rib 6", color=ribLineCol, linewidth=1)
+p7 = plot(drawRib and nRib >= 7 ? e7 : na, "Rib 7", color=ribLineCol, linewidth=1)
+
+fill(p1, p5, color=drawRib and nRib == 5 ? ribFillCol : na, title="Rib Fill 5")
+fill(p1, p6, color=drawRib and nRib == 6 ? ribFillCol : na, title="Rib Fill 6")
+fill(p1, p7, color=drawRib and nRib == 7 ? ribFillCol : na, title="Rib Fill 7")
+
+ribWidth = math.abs(nz(eShort) - nz(eLong))
+ribWidthPct = close != 0 ? ribWidth / close * 100.0 : 0.0
+isSqueeze   = drawRib and showRibSignals and ribWidthPct <= squeezePct
+isExpand    = drawRib and showRibSignals and ribWidthPct >= expandPct
+twistBull   = drawRib and showRibSignals and ta.crossover(eShort, eLong)
+twistBear   = drawRib and showRibSignals and ta.crossunder(eShort, eLong)
+
+bgcolor(isSqueeze ? color.new(#FFD600, 92) : isExpand ? (ribBullish ? color.new(#00C853, 95) : color.new(#FF1744, 95)) : na, title="Ribbon state BG")
+
+plotshape(twistBull, "Ribbon Twist Bull", style=shape.diamond, location=location.belowbar, color=#00E676, size=size.tiny, text="Twist↑")
+plotshape(twistBear, "Ribbon Twist Bear", style=shape.diamond, location=location.abovebar, color=#FF5252, size=size.tiny, text="Twist↓")
+
+var table info = table.new(position.top_right, 1, 3, bgcolor=color.new(#000000, 70))
+if barstate.islast and showInfo
+    tfLabel = isWeekly ? "W" : is3D ? "3D" : isDaily ? "D" : is4H ? "4H" : is1H ? "1H" : is30M ? "30m" : timeframe.period
+    regime  = isBull ? "BULL" : "BEAR"
+    parts = tfLabel + " · " + regime
+    if not na(lenFast)
+        parts += " · " + (typFast == 1 ? "EMA" : "SMA") + str.tostring(lenFast)
+    if not na(lenMid)
+        parts += " / " + (typMid == 1 ? "EMA" : "SMA") + str.tostring(lenMid)
+    if not na(lenSlow)
+        parts += " / " + (typSlow == 1 ? "EMA" : "SMA") + str.tostring(lenSlow)
+    if not na(lenX)
+        parts += " / " + (typX == 1 ? "EMA" : "SMA") + str.tostring(lenX)
+    if not na(lenY)
+        parts += " / " + (typY == 1 ? "EMA" : "SMA") + str.tostring(lenY)
+    table.cell(info, 0, 0, parts, text_color=color.white, text_size=size.small)
+
+    ribTxt = not drawRib ? "Ribbon: OFF" : (ribBullish ? "Ribbon: BULL" : "Ribbon: BEAR") + " · w=" + str.tostring(ribWidthPct, "#.##") + "%"
+    if isSqueeze
+        ribTxt += " · SQUEEZE"
+    else if isExpand
+        ribTxt += " · EXPAND"
+    table.cell(info, 0, 1, ribTxt, text_color=ribBullish ? #69F0AE : #FF8A80, text_size=size.tiny)
+
+    hint = isBull ? "שורי: משקל על מהירים + ראש Ribbon" : "דובי: משקל על איטיים + בלימת עליות"
+    if is3D
+        hint := "3D: מסנן רעש · בלי Ribbon (מומלץ)"
+    table.cell(info, 0, 2, hint, text_color=color.new(color.white, 30), text_size=size.tiny)

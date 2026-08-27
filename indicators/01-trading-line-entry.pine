@@ -1,0 +1,583 @@
+// TradingView Pine Script v6
+// Trading Line Entry - RSI Swing + Pivot Trend Lines + Entry Signals
+// RSI Swing: © BalintDavid (Mozilla Public License 2.0)
+// Trend Lines: from Pink Surge Runline (pivot-based)
+// Entry: 2+ swing points on/near trend line → new swing on line = entry
+// Author: Ron Belson
+//@version=6
+indicator("Trading Line Entry", overlay=true, max_bars_back=1000, max_lines_count=200, max_labels_count=150)
+
+// =============================================================================
+// PART 1: RSI SWING INDICATOR - EXACT COPY FROM rsi_swing_indicator.pine
+// =============================================================================
+
+rsiSource = input.source(title="RSI Source", defval=close, group="RSI Swing")
+rsiLength = input.int(title="RSI Length", defval=7, group="RSI Swing")
+rsiOverbought = input.int(title="RSI Overbought", defval=70, minval=51, maxval=100, group="RSI Swing")
+rsiOvesold = input.int(title="RSI Oversold", defval=30, minval=1, maxval=49, group="RSI Swing")
+showConnectingLines = input.bool(true, title="Show connecting lines (HH-LL)", group="RSI Swing", tooltip="Lines connecting swing points between candles")
+showOnlyLastLine = input.bool(false, title="Show only last connecting line", group="RSI Swing")
+showOnlyHHLL = input.bool(false, title="Show only HH/LL labels", group="RSI Swing")
+
+labelSizeOpt = input.string("Tiny", "Label Font Size", options=["Tiny", "Small", "Normal", "Large"], group="Label Display")
+showTimeElapsed = input.bool(true, title="Show time elapsed (high→low)", group="Label Display")
+showProfit = input.bool(true, title="Show profit from last swing", group="Label Display")
+showTimeZones = input.bool(true, title="Show time (NY + Israel)", group="Label Display")
+capitalAmount = input.float(20000, "Capital for profit calc", minval=1, group="Label Display")
+showNextBubbleRsi = input.bool(true, title="Show next-bubble RSI distance on last bubble", group="Label Display", tooltip="On the latest bubble only: how far RSI is from the threshold that starts the next bubble")
+showNextStartMarks = input.bool(false, title="Show OS/OB START marks (small bubbles)", group="Label Display", tooltip="Small aqua/orange marks on the exact bar where the next-bubble RSI condition first starts")
+
+enableHHAlert = input.bool(true, title="Alert on HH", group="Alerts")
+enableLHAlert = input.bool(true, title="Alert on LH", group="Alerts")
+enableHLAlert = input.bool(true, title="Alert on HL", group="Alerts")
+enableLLAlert = input.bool(true, title="Alert on LL", group="Alerts")
+
+showReversalArrow = input.bool(true, title="Show reversal arrow", group="Reversal Arrow", tooltip="Master switch for triangles after bubbles.")
+enableArrowOversold = input.bool(true, "Green arrow: after low bubble", group="Reversal Arrow", tooltip="Unchecked = green arrow off")
+enableArrowOverbought = input.bool(true, "Red arrow: after high bubble", group="Reversal Arrow", tooltip="Unchecked = red arrow off")
+arrowFilterMode = input.string("OB/OS only", "Arrow RSI filter (AND choice)", options=["RSI MA only", "OB/OS only", "MA and OB/OS"], group="Reversal Arrow", tooltip="RSI MA only = original. OB/OS only = 70/30. MA and OB/OS = both must be true.")
+arrowRsiOverbought = input.int(70, "Arrow RSI Overbought", minval=51, maxval=100, group="Reversal Arrow")
+arrowRsiOversold = input.int(30, "Arrow RSI Oversold", minval=1, maxval=49, group="Reversal Arrow")
+rsiMALength = input.int(14, "RSI MA Length (Smoothing)", 1, 50, group="Reversal Arrow", tooltip="SMA of RSI - used when filter includes RSI MA")
+smaLength = input.int(9, "Price SMA Length", 1, 200, group="Reversal Arrow")
+arrowOffsetAtr = input.float(0.5, "Arrow offset (ATR)", minval=0.2, maxval=2.0, step=0.1, group="Reversal Arrow", tooltip="Distance of arrows from bar in ATR units")
+showSmaLine = input.bool(true, title="Show SMA line", group="Reversal Arrow")
+
+showLastSwing = input.bool(true, title="Show 'Last Swing' signals", group="Last Swing")
+useDivergence = input.bool(true, title="1. RSI Divergence", group="Last Swing")
+useExtreme = input.bool(true, title="2. RSI Extreme", group="Last Swing")
+useStructure = input.bool(true, title="3. RSI Exit/Re-entry", group="Last Swing")
+rsiExtremeLow = input.int(20, "RSI Extreme Oversold", 1, 49, group="Last Swing")
+rsiExtremeHigh = input.int(80, "RSI Extreme Overbought", 51, 100, group="Last Swing")
+minConditions = input.int(2, "Min conditions to signal", 1, 3, group="Last Swing")
+
+rsiValue = ta.rsi(rsiSource, rsiLength)
+rsiMA = ta.sma(rsiValue, rsiMALength)
+smaVal = ta.sma(close, smaLength)
+isOverbought = rsiValue >= rsiOverbought
+isOversold = rsiValue <= rsiOvesold
+
+// =============================================================================
+// TREND LINES (must run before labels - for ★ on bubble near outer line)
+// =============================================================================
+showTrendLines = input.bool(true, "Show trend lines", group="Trend Lines")
+trendSourceOpt = input.string("High/Low", "Trend Line Source", options=["High/Low", "Close", "Open"], group="Trend Lines")
+pivotLen = input.int(5, "Pivot Length", minval=1, maxval=50, group="Trend Lines")
+extendTrendLines = input.bool(true, "Extend trend lines", group="Trend Lines")
+trendHighColor = input.color(color.white, "Trend High Line", group="Trend Lines")
+trendLowColor = input.color(color.yellow, "Trend Low Line", group="Trend Lines")
+showStarOnBubbleNearLine = input.bool(true, "★ on bubble near outer trend line", group="Trend Lines", tooltip="Star only on HH/LH/LL/HL when close to outer line")
+bubbleNearLinePct = input.float(1.0, "Near line % for ★", minval=0.1, maxval=5.0, step=0.1, group="Trend Lines")
+
+trendHighSrc = trendSourceOpt == "High/Low" ? high : trendSourceOpt == "Close" ? close : open
+trendLowSrc = trendSourceOpt == "High/Low" ? low : trendSourceOpt == "Close" ? close : open
+pivotHigh = ta.pivothigh(trendHighSrc, pivotLen, pivotLen)
+pivotLow = ta.pivotlow(trendLowSrc, pivotLen, pivotLen)
+
+var float lastHighPrice = na
+var int lastHighIndex = na
+var float prevHighPrice = na
+var int prevHighIndex = na
+var float lastLowPrice = na
+var int lastLowIndex = na
+var float prevLowPrice = na
+var int prevLowIndex = na
+
+if not na(pivotHigh)
+    prevHighPrice := lastHighPrice
+    prevHighIndex := lastHighIndex
+    lastHighPrice := pivotHigh
+    lastHighIndex := bar_index - pivotLen
+
+if not na(pivotLow)
+    prevLowPrice := lastLowPrice
+    prevLowIndex := lastLowIndex
+    lastLowPrice := pivotLow
+    lastLowIndex := bar_index - pivotLen
+
+var line highLine = na
+var line lowLine = na
+
+if showTrendLines and not na(prevHighIndex) and not na(lastHighIndex)
+    if na(highLine)
+        highLine := line.new(prevHighIndex, prevHighPrice, lastHighIndex, lastHighPrice, color=trendHighColor, width=2, extend=extendTrendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(highLine, prevHighIndex, prevHighPrice)
+        line.set_xy2(highLine, lastHighIndex, lastHighPrice)
+        line.set_extend(highLine, extendTrendLines ? extend.right : extend.none)
+        line.set_color(highLine, trendHighColor)
+
+if showTrendLines and not na(prevLowIndex) and not na(lastLowIndex)
+    if na(lowLine)
+        lowLine := line.new(prevLowIndex, prevLowPrice, lastLowIndex, lastLowPrice, color=trendLowColor, width=2, extend=extendTrendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(lowLine, prevLowIndex, prevLowPrice)
+        line.set_xy2(lowLine, lastLowIndex, lastLowPrice)
+        line.set_extend(lowLine, extendTrendLines ? extend.right : extend.none)
+        line.set_color(lowLine, trendLowColor)
+
+// Entry Trading Lines (lime/fuchsia) - Pivot 9
+showEntryTrendLines = input.bool(true, "Show Entry trend lines", group="Entry Trading Lines")
+entryPivotLen = input.int(9, "Pivot Length", minval=1, maxval=50, group="Entry Trading Lines")
+entryTrendSourceOpt = input.string("High/Low", "Source", options=["High/Low", "Close", "Open"], group="Entry Trading Lines")
+entryExtendLines = input.bool(true, "Extend lines", group="Entry Trading Lines")
+entryTrendHighColor = input.color(color.lime, "Entry High Line", group="Entry Trading Lines")
+entryTrendLowColor = input.color(color.fuchsia, "Entry Low Line", group="Entry Trading Lines")
+
+entryTrendHighSrc = entryTrendSourceOpt == "High/Low" ? high : entryTrendSourceOpt == "Close" ? close : open
+entryTrendLowSrc = entryTrendSourceOpt == "High/Low" ? low : entryTrendSourceOpt == "Close" ? close : open
+entryPivotHigh = ta.pivothigh(entryTrendHighSrc, entryPivotLen, entryPivotLen)
+entryPivotLow = ta.pivotlow(entryTrendLowSrc, entryPivotLen, entryPivotLen)
+
+var float entryLastHighPrice = na
+var int entryLastHighIndex = na
+var float entryPrevHighPrice = na
+var int entryPrevHighIndex = na
+var float entryLastLowPrice = na
+var int entryLastLowIndex = na
+var float entryPrevLowPrice = na
+var int entryPrevLowIndex = na
+
+if not na(entryPivotHigh)
+    entryPrevHighPrice := entryLastHighPrice
+    entryPrevHighIndex := entryLastHighIndex
+    entryLastHighPrice := entryPivotHigh
+    entryLastHighIndex := bar_index - entryPivotLen
+if not na(entryPivotLow)
+    entryPrevLowPrice := entryLastLowPrice
+    entryPrevLowIndex := entryLastLowIndex
+    entryLastLowPrice := entryPivotLow
+    entryLastLowIndex := bar_index - entryPivotLen
+
+var line entryHighLine = na
+var line entryLowLine = na
+
+if showEntryTrendLines and not na(entryPrevHighIndex) and not na(entryLastHighIndex)
+    if na(entryHighLine)
+        entryHighLine := line.new(entryPrevHighIndex, entryPrevHighPrice, entryLastHighIndex, entryLastHighPrice, color=entryTrendHighColor, width=2, extend=entryExtendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(entryHighLine, entryPrevHighIndex, entryPrevHighPrice)
+        line.set_xy2(entryHighLine, entryLastHighIndex, entryLastHighPrice)
+        line.set_extend(entryHighLine, entryExtendLines ? extend.right : extend.none)
+        line.set_color(entryHighLine, entryTrendHighColor)
+if showEntryTrendLines and not na(entryPrevLowIndex) and not na(entryLastLowIndex)
+    if na(entryLowLine)
+        entryLowLine := line.new(entryPrevLowIndex, entryPrevLowPrice, entryLastLowIndex, entryLastLowPrice, color=entryTrendLowColor, width=2, extend=entryExtendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(entryLowLine, entryPrevLowIndex, entryPrevLowPrice)
+        line.set_xy2(entryLowLine, entryLastLowIndex, entryLastLowPrice)
+        line.set_extend(entryLowLine, entryExtendLines ? extend.right : extend.none)
+        line.set_color(entryLowLine, entryTrendLowColor)
+
+getLineY(_line, _x) =>
+    x1 = line.get_x1(_line)
+    y1 = line.get_y1(_line)
+    x2 = line.get_x2(_line)
+    y2 = line.get_y2(_line)
+    dx = x2 - x1
+    dx == 0 ? na : y1 + (y2 - y1) * (_x - x1) / dx
+
+priceNearOuterLine(price, lineY) =>
+    not na(lineY) and lineY > 0 and math.abs(price - lineY) / lineY * 100 <= bubbleNearLinePct
+
+var int laststate = 0
+var float hh = low
+var float ll = high
+var label labelll = na
+var label labelhh = na
+var line line_up = na
+var line line_down = na
+var float last_actual_label_hh_price = 0.0
+var float last_actual_label_ll_price = 0.0
+var float last_rsi_at_low = na
+var float last_rsi_at_high = na
+var bool rsiExitedOSSinceHigh = false
+var bool rsiExitedOBSinceLow = false
+var float swing_high_open = na
+var float swing_high_close = na
+var int swing_high_bar = na
+var float swing_low_open = na
+var float swing_low_close = na
+var int swing_low_bar = na
+var bool reversalArrowUpShown = false
+var bool reversalArrowDownShown = false
+var int lastGreenBubbleBar = na
+var int lastRedBubbleBar = na
+var string labelhhBaseText = ""
+var string labelllBaseText = ""
+
+var bool alertHH = false
+var bool alertLH = false
+var bool alertHL = false
+var bool alertLL = false
+alertHH := false
+alertLH := false
+alertHL := false
+alertLL := false
+
+obLabelText() =>
+    if(last_actual_label_hh_price < high)
+        "SELL HIGH"
+    else
+        "SELL LOW"
+osLabelText() =>
+    if(last_actual_label_ll_price < low)
+        "BUY HIGH"
+    else
+        "BUY LOW"
+
+shouldShowLabel(labelText) =>
+    not showOnlyHHLL or labelText == "HH" or labelText == "LL"
+
+getLabelSize() =>
+    switch labelSizeOpt
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        => size.tiny
+
+labelStyleColors(labelText) =>
+    fillCol = color.red
+    textCol = color.white
+    if labelText == "SELL HIGH"
+        fillCol := color.red
+        textCol := color.white
+    else if labelText == "SELL LOW"
+        fillCol := color.new(#E57373, 0)
+        textCol := color.black
+    else if labelText == "BUY LOW"
+        fillCol := color.green
+        textCol := color.white
+    else if labelText == "BUY HIGH"
+        fillCol := color.new(#81C784, 0)
+        textCol := color.black
+    [fillCol, textCol]
+
+formatElapsedTime(ms) =>
+    if ms < 60000
+        str.tostring(math.floor(ms / 1000), "#") + " sec"
+    else if ms < 3600000
+        str.tostring(math.floor(ms / 60000), "#") + " min"
+    else if ms < 86400000
+        hrs = math.floor(ms / 3600000)
+        min = math.floor((ms % 3600000) / 60000)
+        min > 0 ? str.tostring(hrs, "#") + "h " + str.tostring(min, "#") + "m" : str.tostring(hrs, "#") + " hrs"
+    else
+        days = math.floor(ms / 86400000)
+        hrs = math.floor((ms % 86400000) / 3600000)
+        hrs > 0 ? str.tostring(days, "#") + "d " + str.tostring(hrs, "#") + "h" : str.tostring(days, "#") + " days"
+
+getTimeZonesStr() =>
+    if showTimeZones
+        _ny = str.format_time(time, "HH:mm", "America/New_York")
+        _il = str.format_time(time, "HH:mm", "Asia/Jerusalem")
+        "NY " + _ny + " | IL " + _il
+    else
+        ""
+
+formatLabelText(labelText, price, showStar, elapsedMs, profit, profitPct) =>
+    base = labelText + "\n" + str.tostring(price, format.mintick)
+    withStar = showStar ? base + "\n★" : base
+    withTimeZones = getTimeZonesStr() != "" ? withStar + "\n" + getTimeZonesStr() : withStar
+    withTime = (showTimeElapsed and not na(elapsedMs) and elapsedMs >= 0) ? withTimeZones + "\n" + formatElapsedTime(elapsedMs) : withTimeZones
+    withProfit = (showProfit and not na(profit)) ? withTime + "\n$" + str.tostring(profit, "#.##") + (not na(profitPct) ? " (" + str.tostring(profitPct, "#.#") + "%)" : "") : withTime
+    withProfit
+
+nextBubbleRsiLine() =>
+    if not showNextBubbleRsi or laststate == 0
+        ""
+    else if laststate == 1
+        gap = math.max(rsiValue - rsiOvesold, 0.0)
+        ready = rsiValue <= rsiOvesold
+        // Waiting for next LOW bubble: first bar where RSI <= oversold
+        ready ? "START when RSI≤" + str.tostring(rsiOvesold) + "\nRSI " + str.tostring(rsiValue, "#.#") + " NOW" : "Wait RSI≤" + str.tostring(rsiOvesold) + "\nnow " + str.tostring(rsiValue, "#.#") + " | left " + str.tostring(gap, "#.#")
+    else
+        gap = math.max(rsiOverbought - rsiValue, 0.0)
+        ready = rsiValue >= rsiOverbought
+        // Waiting for next HIGH bubble: first bar where RSI >= overbought
+        ready ? "START when RSI≥" + str.tostring(rsiOverbought) + "\nRSI " + str.tostring(rsiValue, "#.#") + " NOW" : "Wait RSI≥" + str.tostring(rsiOverbought) + "\nnow " + str.tostring(rsiValue, "#.#") + " | left " + str.tostring(gap, "#.#")
+
+lastSwingLowC1 = useDivergence and not na(last_rsi_at_low) and (rsiValue > last_rsi_at_low)
+lastSwingLowC2 = useExtreme and (rsiValue <= rsiExtremeLow)
+lastSwingLowC3 = useStructure and rsiExitedOSSinceHigh
+lastSwingLow = showLastSwing and (lastSwingLowC1 ? 1 : 0) + (lastSwingLowC2 ? 1 : 0) + (lastSwingLowC3 ? 1 : 0) >= minConditions
+
+lastSwingHighC1 = useDivergence and not na(last_rsi_at_high) and (rsiValue < last_rsi_at_high)
+lastSwingHighC2 = useExtreme and (rsiValue >= rsiExtremeHigh)
+lastSwingHighC3 = useStructure and rsiExitedOBSinceLow
+lastSwingHigh = showLastSwing and (lastSwingHighC1 ? 1 : 0) + (lastSwingHighC2 ? 1 : 0) + (lastSwingHighC3 ? 1 : 0) >= minConditions
+
+deleteOldLines() =>
+    if(showOnlyLastLine)
+        if(not na(line_up))
+            line.delete(line_up)
+        if(not na(line_down))
+            line.delete(line_down)
+
+highLineYHere = not na(highLine) ? getLineY(highLine, bar_index) : na
+lowLineYHere = not na(lowLine) ? getLineY(lowLine, bar_index) : na
+
+createOverBoughtLabel(isIt, isLastSwing, oppositeBarIndex, oppositePrice) =>
+    labelText = isIt ? obLabelText() : osLabelText()
+    showLabel = shouldShowLabel(labelText)
+    labelPrice = isIt ? high : low
+    barsDiff = not na(oppositeBarIndex) and bar_index > oppositeBarIndex ? bar_index - oppositeBarIndex : int(na)
+    elapsedMs = not na(barsDiff) ? (time - time[barsDiff]) : float(na)
+    profit = not na(oppositePrice) and oppositePrice != 0 ? (isIt ? (high - oppositePrice) / oppositePrice * capitalAmount : (oppositePrice - low) / oppositePrice * capitalAmount) : float(na)
+    profitPct = not na(oppositePrice) and oppositePrice != 0 ? (isIt ? (high - oppositePrice) / oppositePrice * 100 : (oppositePrice - low) / oppositePrice * 100) : float(na)
+    _lineY = isIt ? highLineYHere : lowLineYHere
+    _price = isIt ? high : low
+    _showStar = showStarOnBubbleNearLine and not na(_lineY) and priceNearOuterLine(_price, _lineY)
+    labelFinalText = showLabel ? formatLabelText(labelText, labelPrice, _showStar, elapsedMs, profit, profitPct) : ""
+    [labelFillColorSolid, labelTextColorSolid] = labelStyleColors(labelText)
+    labelTextColor = showLabel ? labelTextColorSolid : color.new(color.white, 100)
+    labelFillColor = showLabel ? labelFillColorSolid : color.new(labelFillColorSolid, 100)
+    sz = getLabelSize()
+    if(isIt)
+        label.new(x=bar_index, y=na ,yloc=yloc.abovebar, style=label.style_label_down, color=labelFillColor, textcolor=labelTextColor, size=sz, text=labelFinalText)
+    else
+        label.new(x=bar_index, y=na ,yloc=yloc.belowbar, style=label.style_label_up, color=labelFillColor, textcolor=labelTextColor, size=sz, text=labelFinalText)
+
+moveOversoldLabel(isLastSwing, oppositeBarIndex, oppositePrice) =>
+    labelText = osLabelText()
+    showLabel = shouldShowLabel(labelText)
+    labelPrice = low
+    barsDiff = not na(oppositeBarIndex) and bar_index > oppositeBarIndex ? bar_index - oppositeBarIndex : int(na)
+    elapsedMs = not na(barsDiff) ? (time - time[barsDiff]) : float(na)
+    profit = not na(oppositePrice) and oppositePrice != 0 ? (oppositePrice - low) / oppositePrice * capitalAmount : float(na)
+    profitPct = not na(oppositePrice) and oppositePrice != 0 ? (oppositePrice - low) / oppositePrice * 100 : float(na)
+    _showStar = showStarOnBubbleNearLine and not na(lowLineYHere) and priceNearOuterLine(low, lowLineYHere)
+    labelFinalText = showLabel ? formatLabelText(labelText, labelPrice, _showStar, elapsedMs, profit, profitPct) : ""
+    [labelFillColorSolid, labelTextColorSolid] = labelStyleColors(labelText)
+    labelTextColor = showLabel ? labelTextColorSolid : color.new(color.white, 100)
+    labelFillColor = showLabel ? labelFillColorSolid : color.new(labelFillColorSolid, 100)
+    label.set_x(labelll, bar_index)
+    label.set_y(labelll, low)
+    label.set_text(labelll, labelFinalText)
+    label.set_color(labelll, labelFillColor)
+    label.set_textcolor(labelll, labelTextColor)
+    if showConnectingLines and not na(line_down)
+        line.set_x1(line_down, bar_index)
+        line.set_y1(line_down, low)
+    labelFinalText
+
+moveOverBoughtLabel(isLastSwing, oppositeBarIndex, oppositePrice) =>
+    labelText = obLabelText()
+    showLabel = shouldShowLabel(labelText)
+    labelPrice = high
+    barsDiff = not na(oppositeBarIndex) and bar_index > oppositeBarIndex ? bar_index - oppositeBarIndex : int(na)
+    elapsedMs = not na(barsDiff) ? (time - time[barsDiff]) : float(na)
+    profit = not na(oppositePrice) and oppositePrice != 0 ? (high - oppositePrice) / oppositePrice * capitalAmount : float(na)
+    profitPct = not na(oppositePrice) and oppositePrice != 0 ? (high - oppositePrice) / oppositePrice * 100 : float(na)
+    _showStar = showStarOnBubbleNearLine and not na(highLineYHere) and priceNearOuterLine(high, highLineYHere)
+    labelFinalText = showLabel ? formatLabelText(labelText, labelPrice, _showStar, elapsedMs, profit, profitPct) : ""
+    [labelFillColorSolid, labelTextColorSolid] = labelStyleColors(labelText)
+    labelTextColor = showLabel ? labelTextColorSolid : color.new(color.white, 100)
+    labelFillColor = showLabel ? labelFillColorSolid : color.new(labelFillColorSolid, 100)
+    label.set_x(labelhh, bar_index)
+    label.set_y(labelhh, high)
+    label.set_text(labelhh, labelFinalText)
+    label.set_color(labelhh, labelFillColor)
+    label.set_textcolor(labelhh, labelTextColor)
+    if showConnectingLines and not na(line_up)
+        line.set_x1(line_up, bar_index)
+        line.set_y1(line_up, high)
+    labelFinalText
+
+if ta.crossover(rsiValue, rsiOvesold)
+    rsiExitedOSSinceHigh := true
+if ta.crossunder(rsiValue, rsiOverbought)
+    rsiExitedOBSinceLow := true
+
+obConditionStart = false
+osConditionStart = false
+
+if(laststate == 2 and isOverbought)
+    hh := high
+    last_rsi_at_high := rsiValue
+    rsiExitedOSSinceHigh := false
+    swing_high_open := open
+    swing_high_close := close
+    swing_high_bar := bar_index
+    obConditionStart := true
+    if obLabelText() == "HH"
+        alertHH := true
+    else
+        alertLH := true
+    if not na(labelll) and labelllBaseText != ""
+        label.set_text(labelll, labelllBaseText)
+    labelhh := createOverBoughtLabel(true, lastSwingHigh, na(labelll) ? int(na) : label.get_x(labelll), na(labelll) ? float(na) : label.get_y(labelll))
+    labelhhBaseText := label.get_text(labelhh)
+    last_actual_label_ll_price := label.get_y(labelll)
+    labelll_ts = label.get_x(labelll)
+    labelll_price = label.get_y(labelll)
+    deleteOldLines()
+    line_up := showConnectingLines ? line.new(x1=bar_index, y1=high, x2=labelll_ts, y2=labelll_price, width=1) : na
+    // Fixed mark on the bar where next HIGH bubble condition first starts (does not crawl with bubble)
+    if showNextStartMarks
+        label.new(bar_index, high, "OB START\nRSI≥" + str.tostring(rsiOverbought), style=label.style_label_down, color=color.orange, textcolor=color.black, size=size.tiny)
+
+if(laststate == 1 and isOversold)
+    ll := low
+    last_rsi_at_low := rsiValue
+    rsiExitedOBSinceLow := false
+    swing_low_open := open
+    swing_low_close := close
+    swing_low_bar := bar_index
+    osConditionStart := true
+    if osLabelText() == "LL"
+        alertLL := true
+    else
+        alertHL := true
+    if not na(labelhh) and labelhhBaseText != ""
+        label.set_text(labelhh, labelhhBaseText)
+    labelll := createOverBoughtLabel(false, lastSwingLow, na(labelhh) ? int(na) : label.get_x(labelhh), na(labelhh) ? float(na) : label.get_y(labelhh))
+    labelllBaseText := label.get_text(labelll)
+    last_actual_label_hh_price := label.get_y(labelhh)
+    labelhh_ts = label.get_x(labelhh)
+    labelhh_price = label.get_y(labelhh)
+    deleteOldLines()
+    line_down := showConnectingLines ? line.new(x1=bar_index, y1=low, x2=labelhh_ts, y2=labelhh_price, width=1) : na
+    // Fixed mark on the bar where next LOW bubble condition first starts (does not crawl with bubble)
+    if showNextStartMarks
+        label.new(bar_index, low, "OS START\nRSI≤" + str.tostring(rsiOvesold), style=label.style_label_up, color=color.aqua, textcolor=color.black, size=size.tiny)
+
+if(isOverbought)
+    if(high >= hh)
+        hh := high
+        last_rsi_at_high := rsiValue
+        rsiExitedOSSinceHigh := false
+        swing_high_open := open
+        swing_high_close := close
+        swing_high_bar := bar_index
+        if obLabelText() == "HH"
+            alertHH := true
+        else
+            alertLH := true
+        labelhhBaseText := moveOverBoughtLabel(lastSwingHigh, na(labelll) ? int(na) : label.get_x(labelll), na(labelll) ? float(na) : label.get_y(labelll))
+    laststate := 1
+
+if(isOversold)
+    if(low <= ll)
+        ll := low
+        last_rsi_at_low := rsiValue
+        rsiExitedOBSinceLow := false
+        swing_low_open := open
+        swing_low_close := close
+        swing_low_bar := bar_index
+        if osLabelText() == "LL"
+            alertLL := true
+        else
+            alertHL := true
+        labelllBaseText := moveOversoldLabel(lastSwingLow, na(labelhh) ? int(na) : label.get_x(labelhh), na(labelhh) ? float(na) : label.get_y(labelhh))
+    laststate := 2
+
+if(laststate == 1 and isOverbought)
+    if(hh <= high)
+        hh := high
+        last_rsi_at_high := rsiValue
+        rsiExitedOSSinceHigh := false
+        swing_high_open := open
+        swing_high_close := close
+        swing_high_bar := bar_index
+        if obLabelText() == "HH"
+            alertHH := true
+        else
+            alertLH := true
+        labelhhBaseText := moveOverBoughtLabel(lastSwingHigh, na(labelll) ? int(na) : label.get_x(labelll), na(labelll) ? float(na) : label.get_y(labelll))
+
+if(laststate == 2 and isOversold)
+    if(low <= ll)
+        ll := low
+        last_rsi_at_low := rsiValue
+        rsiExitedOBSinceLow := false
+        swing_low_open := open
+        swing_low_close := close
+        swing_low_bar := bar_index
+        if osLabelText() == "LL"
+            alertLL := true
+        else
+            alertHL := true
+        labelllBaseText := moveOversoldLabel(lastSwingLow, na(labelhh) ? int(na) : label.get_x(labelhh), na(labelhh) ? float(na) : label.get_y(labelhh))
+
+if(laststate == 1)
+    if(hh <= high)
+        hh := high
+        last_rsi_at_high := rsiValue
+        rsiExitedOSSinceHigh := false
+        swing_high_open := open
+        swing_high_close := close
+        swing_high_bar := bar_index
+        if obLabelText() == "HH"
+            alertHH := true
+        else
+            alertLH := true
+        labelhhBaseText := moveOverBoughtLabel(lastSwingHigh, na(labelll) ? int(na) : label.get_x(labelll), na(labelll) ? float(na) : label.get_y(labelll))
+
+if(laststate == 2)
+    if(ll >= low)
+        ll := low
+        last_rsi_at_low := rsiValue
+        rsiExitedOBSinceLow := false
+        swing_low_open := open
+        swing_low_close := close
+        swing_low_bar := bar_index
+        if osLabelText() == "LL"
+            alertLL := true
+        else
+            alertHL := true
+        labelllBaseText := moveOversoldLabel(lastSwingLow, na(labelhh) ? int(na) : label.get_x(labelhh), na(labelhh) ? float(na) : label.get_y(labelhh))
+
+// New bubble → allow 1 new triangle for it. DON'T delete - each bubble keeps its triangle.
+if alertLL or alertHL and not na(swing_low_bar)
+    if na(lastGreenBubbleBar) or swing_low_bar != lastGreenBubbleBar
+        lastGreenBubbleBar := swing_low_bar
+        reversalArrowUpShown := false
+if alertHH or alertLH and not na(swing_high_bar)
+    if na(lastRedBubbleBar) or swing_high_bar != lastRedBubbleBar
+        lastRedBubbleBar := swing_high_bar
+        reversalArrowDownShown := false
+
+// Arrow RSI filter: choose MA only / OB-OS only / both (AND)
+maOkUp = rsiValue > rsiMA
+osOkUp = rsiValue <= arrowRsiOversold
+maOkDown = rsiValue < rsiMA
+obOkDown = rsiValue >= arrowRsiOverbought
+filterOkUp = arrowFilterMode == "RSI MA only" ? maOkUp : arrowFilterMode == "OB/OS only" ? osOkUp : maOkUp and osOkUp
+filterOkDown = arrowFilterMode == "RSI MA only" ? maOkDown : arrowFilterMode == "OB/OS only" ? obOkDown : maOkDown and obOkDown
+
+reversalUp = showReversalArrow and enableArrowOversold and filterOkUp and not na(swing_low_bar) and bar_index >= swing_low_bar and not reversalArrowUpShown
+reversalDown = showReversalArrow and enableArrowOverbought and filterOkDown and not na(swing_high_bar) and bar_index >= swing_high_bar and not reversalArrowDownShown
+showUp = reversalUp
+showDown = reversalDown
+
+atrVal = ta.atr(14)
+reversalOffset = atrVal * arrowOffsetAtr
+
+if showUp
+    reversalArrowUpShown := true
+    lastGreenBubbleBar := swing_low_bar
+    label.new(bar_index, low - reversalOffset, "", style=label.style_label_up, color=color.green, textcolor=color.green, size=size.small)
+if showDown
+    reversalArrowDownShown := true
+    lastRedBubbleBar := swing_high_bar
+    label.new(bar_index, high + reversalOffset, "", style=label.style_label_down, color=color.red, textcolor=color.red, size=size.small)
+
+plot(showSmaLine ? smaVal : na, "SMA", color=color.blue, linewidth=2)
+
+// Diamond on the exact bar where next-bubble condition starts (stays even if bubble crawls away)
+plotshape(showNextStartMarks and osConditionStart, title="OS START", style=shape.diamond, location=location.belowbar, color=color.aqua, size=size.small, text="OS")
+plotshape(showNextStartMarks and obConditionStart, title="OB START", style=shape.diamond, location=location.abovebar, color=color.orange, size=size.small, text="OB")
+
+// Live: only the latest bubble shows RSI distance to the next-bubble threshold
+nextLine = nextBubbleRsiLine()
+if showNextBubbleRsi and nextLine != ""
+    if laststate == 1 and not na(labelhh) and labelhhBaseText != ""
+        label.set_text(labelhh, labelhhBaseText + "\n" + nextLine)
+    else if laststate == 2 and not na(labelll) and labelllBaseText != ""
+        label.set_text(labelll, labelllBaseText + "\n" + nextLine)
+
+alertcondition(enableHHAlert and alertHH, "HH", "Higher High detected!")
+alertcondition(enableLHAlert and alertLH, "LH", "Lower High detected!")
+alertcondition(enableHLAlert and alertHL, "HL", "Higher Low detected!")
+alertcondition(enableLLAlert and alertLL, "LL", "Lower Low detected!")

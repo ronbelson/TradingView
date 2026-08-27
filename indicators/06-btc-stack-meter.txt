@@ -1,0 +1,1037 @@
+//@version=6
+indicator("BTC Stack Meter", overlay=true, scale=scale.right, max_lines_count=100, max_labels_count=200)
+// Chart layers only. Full webhook facts: BTC Stack Hook.
+// BTC Stack Meter - multi-param edge engine
+// pivot rails, MA stops, MACD, HH/LH/HL/LL, RSI, Pink, Zap
+// Author: Ron Belson
+// All calculations use the current chart timeframe.
+
+// Chart display only (no tables). Webhook facts: BTC Stack Hook.
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+gReg = "Market regime"
+isBull = input.bool(false, "Bull market", group=gReg,
+    tooltip="Off = bear (default). Same as MA+Ribbon by TF: bull emphasizes fast MAs · bear emphasizes slow MAs.")
+
+gMaCol = "MA colors (from Ribbon)"
+colFastBull = input.color(color.new(#00E676, 0), "Fast · bull", group=gMaCol)
+colMidBull  = input.color(color.new(#FFD600, 0), "Mid · bull", group=gMaCol)
+colSlowBull = input.color(color.new(#2979FF, 0), "Slow · bull", group=gMaCol)
+colXBull    = input.color(color.new(#AA00FF, 0), "Extra · bull", group=gMaCol)
+colYBull    = input.color(color.new(#80D8FF, 0), "SMA300 · bull", group=gMaCol)
+colFastBear = input.color(color.new(#FF8A80, 0), "Fast · bear", group=gMaCol)
+colMidBear  = input.color(color.new(#FFAB40, 0), "Mid · bear", group=gMaCol)
+colSlowBear = input.color(color.new(#FF1744, 0), "Slow · bear", group=gMaCol)
+colXBear    = input.color(color.new(#CE93D8, 0), "Extra · bear", group=gMaCol)
+colYBear    = input.color(color.new(#B39DDB, 0), "SMA300 · bear", group=gMaCol)
+
+gMaShow = "MA show (Ribbon set)"
+showMaFast = input.bool(true, "Show fast MA", group=gMaShow)
+showMaMid  = input.bool(true, "Show mid MA", group=gMaShow)
+showMaSlow = input.bool(true, "Show slow MA", group=gMaShow)
+showMaX    = input.bool(true, "Show extra MA", group=gMaShow)
+showMaY    = input.bool(true, "Show SMA 300 (daily)", group=gMaShow)
+nearSlowPct = input.float(1.0, "Near slow %", minval=0.1, maxval=10, step=0.1, group=gMaShow)
+farSlowPct = input.float(3.0, "Far from slow %", minval=0.5, maxval=20, step=0.1, group=gMaShow)
+
+gMaW = "Weekly · EMA20 / SMA200 / SMA300"
+wFastLen = input.int(20, "Fast EMA", minval=1, group=gMaW)
+wSlowLen = input.int(200, "Slow SMA", minval=1, group=gMaW)
+wXLen = input.int(300, "Extra SMA", minval=1, group=gMaW)
+
+gMa3D = "3D · EMA9 / EMA21 / SMA50"
+d3FastLen = input.int(9, "Fast EMA", minval=1, group=gMa3D)
+d3MidLen = input.int(21, "Mid EMA", minval=1, group=gMa3D)
+d3SlowLen = input.int(50, "Slow SMA", minval=1, group=gMa3D)
+
+gMaD = "Daily · EMA9 / 20 / 50 / SMA200 / 300"
+dFastLen = input.int(9, "Fast EMA", minval=1, group=gMaD)
+dMidLen = input.int(20, "Mid EMA", minval=1, group=gMaD)
+dSlowLen = input.int(50, "Slow EMA", minval=1, group=gMaD)
+dXLen = input.int(200, "Extra SMA", minval=1, group=gMaD)
+dYLen = input.int(300, "SMA 300", minval=1, group=gMaD)
+
+gMa4H = "4H · EMA10 / EMA50 / SMA200"
+h4FastLen = input.int(10, "Fast EMA", minval=1, group=gMa4H)
+h4MidLen = input.int(50, "Mid EMA", minval=1, group=gMa4H)
+h4SlowLen = input.int(200, "Slow SMA", minval=1, group=gMa4H)
+
+gMa1H = "1H · EMA9 / EMA50"
+h1FastLen = input.int(9, "Fast EMA", minval=1, group=gMa1H)
+h1SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa1H)
+
+gMa30 = "30m · EMA9 / EMA50"
+m30FastLen = input.int(9, "Fast EMA", minval=1, group=gMa30)
+m30SlowLen = input.int(50, "Slow EMA", minval=1, group=gMa30)
+
+gMaO = "Other TF · EMA9 / 20 / 50"
+oFastLen = input.int(9, "Fast EMA", minval=1, group=gMaO)
+oMidLen = input.int(20, "Mid EMA", minval=1, group=gMaO)
+oSlowLen = input.int(50, "Slow EMA", minval=1, group=gMaO)
+
+gPivot = "Pivot lines"
+largePivotLen = input.int(12, "Large pivot", minval=1, maxval=50, group=gPivot)
+smallPivotLen = input.int(3, "Small pivot", minval=1, maxval=50, group=gPivot)
+showLargePivots = input.bool(true, "Show large pivot", group=gPivot)
+showSmallPivots = input.bool(true, "Show small pivot", group=gPivot)
+extendPivots = input.bool(true, "Extend lines", group=gPivot)
+seqMaxBars = input.int(12, "Small after large max bars", minval=1, maxval=50, group=gPivot, tooltip="Small pivot break must happen within this many bars after large break.")
+seqHoldBars = input.int(6, "Sequence stay hot bars", minval=1, maxval=30, group=gPivot, tooltip="How long the large→small break stays active for edge confluence.")
+pivotAlignPct = input.float(0.35, "Pivot line align %", minval=0.05, maxval=3, step=0.05, group=gPivot, tooltip="3rd pivot within this % of the 2-point line = stronger line (3+).")
+rsiEdgeOs = input.float(35.0, "Edge RSI low", minval=1, maxval=50, step=0.5, group=gPivot, tooltip="RSI at/below = low extreme for EDGE LONG / EXIT SHORT.")
+rsiEdgeOb = input.float(65.0, "Edge RSI high", minval=50, maxval=99, step=0.5, group=gPivot, tooltip="RSI at/above = high extreme for EDGE SHORT / EXIT LONG.")
+
+gRsiSwing = "Bubbles HH HL LL LH"
+showBubbles = input.bool(true, "Show bubbles on chart", group=gRsiSwing)
+rsiLen = input.int(7, "Bubble RSI len (=7)", minval=1, group=gRsiSwing)
+rsiOB = input.int(70, "Overbought", minval=51, maxval=100, group=gRsiSwing)
+rsiOS = input.int(30, "Oversold", minval=1, maxval=49, group=gRsiSwing)
+bubbleCapital = input.float(20000, "Capital for profit $", minval=1, group=gRsiSwing)
+showBubbleTime = input.bool(true, "Show elapsed time", group=gRsiSwing)
+showBubbleProfit = input.bool(true, "Show profit % and $", group=gRsiSwing)
+showBubbleClock = input.bool(true, "Show NY + IL clock", group=gRsiSwing)
+
+gMacd = "MACD"
+macdFast = input.int(8, "Fast", minval=1, group=gMacd)
+macdSlow = input.int(21, "Slow", minval=1, group=gMacd)
+macdSig = input.int(5, "Signal", minval=1, group=gMacd)
+macdNearPct = input.float(8.0, "Near signal (% of MACD range)", minval=0.5, maxval=30, step=0.5, group=gMacd, tooltip="When MACD-signal gap is below threshold = approaching = near flip.")
+macdEqualEps = input.float(1.0, "Almost equal (% of range)", minval=0.1, maxval=10, step=0.1, group=gMacd)
+
+gZap = "Zap · averages (Zap defaults)"
+showZapMa = input.bool(false, "Show Zap MAs", group=gZap, tooltip="Off by default. Regime MAs come from Ribbon-by-TF set (fast/mid/slow). Zap still scores tape color + stops.")
+showZapBg = input.bool(false, "Show Zap background", group=gZap, tooltip="Off by default so Pink heat trail is visible.")
+showZapCandleColors = input.bool(true, "Color candles by Zap", group=gZap)
+zapBgTrans = input.int(88, "Zap bg transparency %", minval=70, maxval=97, group=gZap)
+candlesFollowZap = input.string("Slow", "Candles follow", options=["Slow", "Fast"], group=gZap)
+showZapFast = input.bool(false, "Show Fast MA", group=gZap)
+zapMaTypeFast = input.string("EMA", "Fast MA Type", options=["SMA", "EMA", "WMA", "RMA"], group=gZap)
+zapFastShortLen = input.int(9, "Fast Short Length", minval=1, group=gZap)
+zapFastLongLen = input.int(21, "Fast Long Length", minval=1, group=gZap)
+showZapFastFill = input.bool(false, "Fill Fast Short/Long", group=gZap)
+zapFastFillTrans = input.int(80, "Fast Fill transparency %", minval=50, maxval=95, group=gZap)
+
+showZapSlow = input.bool(false, "Show Slow MA", group=gZap)
+zapMaTypeSlow = input.string("EMA", "Slow MA Type", options=["SMA", "EMA", "WMA", "RMA"], group=gZap)
+zapSlowShortLen = input.int(50, "Slow Short Length", minval=1, group=gZap)
+zapSlowLongLen = input.int(200, "Slow Long Length", minval=1, group=gZap)
+showZap200 = input.bool(false, "Show MA 200 line", group=gZap)
+showZapSlowFill = input.bool(false, "Fill Slow Short/Long", group=gZap, tooltip="Off by default. This fill was covering the Pink heat trail.")
+zapSlowFillTrans = input.int(80, "Slow Fill transparency %", minval=50, maxval=95, group=gZap)
+
+showZap300 = input.bool(false, "Show MA 300", group=gZap)
+zap300Len = input.int(300, "MA 300 Length", minval=1, group=gZap)
+zapMaType300 = input.string("EMA", "MA 300 Type", options=["SMA", "EMA", "WMA", "RMA"], group=gZap)
+
+showZapRsiColors = input.bool(true, "Enable RSI Colors", group=gZap)
+zapMacdFast = input.int(12, "Zap MACD Fast", minval=1, group=gZap)
+zapMacdSlow = input.int(26, "Zap MACD Slow", minval=1, group=gZap)
+zapMacdSig = input.int(9, "Zap MACD Signal", minval=1, group=gZap)
+zapUseStrictMacd = input.bool(false, "Zap MACD > 0 & > Signal", group=gZap)
+zapNearPct = input.float(0.5, "Near MA %", minval=0.05, maxval=5, step=0.05, group=gZap)
+
+gRsi = "RSI (14)"
+rsi14Len = input.int(14, "RSI Length", minval=1, group=gRsi)
+
+gPink = "Pink Surge · Runline fills"
+showPinkRunline = input.bool(true, "Pink runline fills use close", group=gPink, tooltip="Close is never drawn (candles are the runline). Only enables fill math source.")
+showPinkFill100 = input.bool(true, "Fill Runline-SMA100", group=gPink, tooltip="Closer trail vs SMA100.")
+showPinkFill200 = input.bool(true, "Fill Runline-SMA200", group=gPink, tooltip="Wider trail vs SMA200. Original heat fill.")
+showPinkFill50_200 = input.bool(true, "Fill SMA50-SMA200", group=gPink, tooltip="Ribbon between SMA50 and SMA200. Possible trail you saw.")
+showPinkChannel = input.bool(true, "Show SMMA channel trail", group=gPink, tooltip="Original Pink Surge channel: fill between SMMA high/low.")
+pinkChannelLen = input.int(33, "Channel SMMA Length", minval=1, group=gPink)
+pinkPriceAvgLen = input.int(5, "Price Average Length", minval=1, group=gPink)
+pinkChannelFillOpacity = input.int(85, "Channel fill opacity", minval=50, maxval=95, group=gPink)
+pinkHeatMaxDist = input.float(5.0, "Fill Max Dist %", minval=0.1, step=0.1, group=gPink)
+pinkHeatOpacity100 = input.int(75, "Fill 100 Opacity (0-100)", minval=0, maxval=100, group=gPink)
+pinkHeatOpacity200 = input.int(80, "Fill 200 Opacity (0-100)", minval=0, maxval=100, group=gPink)
+pinkHeatNeutralPct = input.float(0.3, "Fill Neutral Threshold %", minval=0.0, step=0.1, group=gPink)
+pinkSma100Len = input.int(100, "SMA 100 Length", minval=1, group=gPink)
+pinkSma200Len = input.int(200, "SMA 200 Length", minval=1, group=gPink)
+showPinkSma100 = input.bool(true, "Show SMA 100", group=gPink)
+showPinkSma200 = input.bool(true, "Show SMA 200", group=gPink)
+showPinkLines = input.bool(false, "Show SMA 20/50", group=gPink)
+showPinkBg = input.bool(false, "Show Pink background columns", group=gPink)
+pinkBgTrans = input.int(85, "Pink bg transparency %", minval=50, maxval=97, group=gPink)
+pinkFast = input.int(20, "SMA Fast Length", minval=1, group=gPink)
+pinkMid = input.int(50, "SMA Mid Length", minval=1, group=gPink)
+pinkSlow = input.int(100, "SMA Slow Length", minval=1, group=gPink)
+pinkDayThresh = input.float(0.0, "Day % Threshold (0=off)", minval=0, maxval=30, step=0.5, group=gPink,
+    tooltip="Original Pink Surge default is 7 for stocks. Use 0 for BTC.")
+
+gDay = "Day %"
+dayTf = input.timeframe("D", "Day timeframe", group=gDay, tooltip="Day open for % vs 0. Default daily UTC per exchange.")
+
+gUi = "Chart"
+showPlots = input.bool(true, "Show lines on chart", group=gUi)
+
+gHook = "Webhook · facts only"
+enableBubbleHook = input.bool(false, "Alert() display ping (optional)", group=gHook, tooltip="Off by default. Full facts_v2 webhook lives on BTC Stack Hook.")
+enableHHAlert = input.bool(true, "Alert on HH", group=gHook)
+enableLHAlert = input.bool(true, "Alert on LH", group=gHook)
+enableHLAlert = input.bool(true, "Alert on HL", group=gHook)
+enableLLAlert = input.bool(true, "Alert on LL", group=gHook)
+hookIncludeLean = input.bool(false, "Include lean fields (off = facts only)", group=gHook)
+
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+clamp01(v) => math.min(math.max(v, 0.0), 1.0)
+
+// Project Y at time t from two time/price anchors (no line.get — avoids zoom drift).
+projY(t1, p1, t2, p2, t) =>
+    float y = na
+    if not na(t1) and not na(t2) and not na(p1) and not na(p2) and t1 != t2 and not na(t)
+        y := p1 + (p2 - p1) * (t - t1) / (t2 - t1)
+    y
+
+// Draw pivot rays only on last bar. Per-bar set_xy* makes objects drift on zoom.
+syncPivotLine(ln, prevT, prevPx, lastT, lastPx, col, show) =>
+    line out = ln
+    if barstate.islast
+        if show and not na(prevT) and not na(lastT) and not na(prevPx) and not na(lastPx)
+            if na(out)
+                out := line.new(prevT, prevPx, lastT, lastPx, xloc=xloc.bar_time, color=col, width=2, extend=extendPivots ? extend.right : extend.none)
+            else
+                line.set_xy1(out, prevT, prevPx)
+                line.set_xy2(out, lastT, lastPx)
+                line.set_extend(out, extendPivots ? extend.right : extend.none)
+                line.set_color(out, col)
+        else if not na(out)
+            line.delete(out)
+            out := na
+    out
+
+// =============================================================================
+// DAY %
+// =============================================================================
+dayOpen = request.security(syminfo.tickerid, dayTf, open, barmerge.gaps_off, barmerge.lookahead_off)
+dayPct = not na(dayOpen) and dayOpen != 0 ? (close - dayOpen) / dayOpen * 100.0 : na
+dayAboveZero = not na(dayPct) and dayPct >= 0
+
+// =============================================================================
+// 1) MA SET BY TF (same lengths/colors as BTC MA + Ribbon by TF)
+// Regime score uses the TF slow MA (+ stack fast/mid when present)
+// =============================================================================
+colFast = isBull ? colFastBull : colFastBear
+colMid  = isBull ? colMidBull  : colMidBear
+colSlow = isBull ? colSlowBull : colSlowBear
+colX    = isBull ? colXBull    : colXBear
+colY    = isBull ? colYBull    : colYBear
+wFast = isBull ? 3 : 1
+wMid  = 2
+wSlowPlot = isBull ? 1 : 3
+wXPlot = isBull ? 1 : 3
+wYPlot = isBull ? 1 : 3
+
+int lenFast = na
+int lenMid  = na
+int lenSlow = na
+int lenX    = na
+int lenY    = na
+int typFast = 0
+int typMid  = 0
+int typSlow = 0
+int typX    = 0
+int typY    = 0
+
+isWeekly = timeframe.isweekly
+is3D = timeframe.period == "3D"
+isDaily = timeframe.isdaily
+is4H = timeframe.period == "240"
+is1H = timeframe.period == "60"
+is30M = timeframe.period == "30"
+
+if isWeekly
+    lenFast := wFastLen
+    typFast := 1
+    lenSlow := wSlowLen
+    typSlow := 2
+    lenX := wXLen
+    typX := 2
+else if is3D
+    lenFast := d3FastLen
+    typFast := 1
+    lenMid := d3MidLen
+    typMid := 1
+    lenSlow := d3SlowLen
+    typSlow := 2
+else if isDaily
+    lenFast := dFastLen
+    typFast := 1
+    lenMid := dMidLen
+    typMid := 1
+    lenSlow := dSlowLen
+    typSlow := 1
+    lenX := dXLen
+    typX := 2
+    lenY := dYLen
+    typY := 2
+else if is4H
+    lenFast := h4FastLen
+    typFast := 1
+    lenMid := h4MidLen
+    typMid := 1
+    lenSlow := h4SlowLen
+    typSlow := 2
+else if is1H
+    lenFast := h1FastLen
+    typFast := 1
+    lenSlow := h1SlowLen
+    typSlow := 1
+else if is30M
+    lenFast := m30FastLen
+    typFast := 1
+    lenSlow := m30SlowLen
+    typSlow := 1
+else
+    lenFast := oFastLen
+    typFast := 1
+    lenMid := oMidLen
+    typMid := 1
+    lenSlow := oSlowLen
+    typSlow := 1
+
+calcMa(float src, int len, int typ) =>
+    float e = ta.ema(src, len)
+    float s = ta.sma(src, len)
+    typ == 1 ? e : typ == 2 ? s : na
+
+maFastRaw = calcMa(close, nz(lenFast, 1), nz(typFast, 0))
+maMidRaw  = calcMa(close, nz(lenMid, 1), nz(typMid, 0))
+maSlowRaw = calcMa(close, nz(lenSlow, 1), nz(typSlow, 0))
+maXRaw    = calcMa(close, nz(lenX, 1), nz(typX, 0))
+maYRaw    = calcMa(close, nz(lenY, 1), nz(typY, 0))
+maFast = not na(lenFast) and typFast != 0 ? maFastRaw : na
+maMid  = not na(lenMid)  and typMid  != 0 ? maMidRaw  : na
+maSlow = not na(lenSlow) and typSlow != 0 ? maSlowRaw : na
+maX    = not na(lenX)    and typX    != 0 ? maXRaw    : na
+maY    = not na(lenY)    and typY    != 0 ? maYRaw    : na
+
+// Primary regime line = TF slow (Ribbon set). Bear also watches extra (200/300) as ceiling.
+slowLine = maSlow
+slowName = (typSlow == 1 ? "EMA " : "SMA ") + str.tostring(lenSlow)
+slowDistPct = not na(slowLine) and slowLine != 0 ? (close - slowLine) / slowLine * 100.0 : na
+aboveSlow = not na(slowDistPct) and slowDistPct >= 0
+nearSlow = not na(slowDistPct) and math.abs(slowDistPct) <= nearSlowPct
+farSlow = not na(slowDistPct) and math.abs(slowDistPct) >= farSlowPct
+
+// Stack hint: fast above mid above slow = bullish structure
+stackBull = not na(maFast) and (na(maMid) or maFast > maMid) and not na(maSlow) and (na(maMid) ? maFast > maSlow : maMid > maSlow)
+stackBear = not na(maFast) and (na(maMid) or maFast < maMid) and not na(maSlow) and (na(maMid) ? maFast < maSlow : maMid < maSlow)
+
+scoreSlow = 0.0
+if not na(slowDistPct)
+    if isBull
+        scoreSlow := clamp01(0.5 + slowDistPct / (farSlowPct * 2.0)) * 200.0 - 100.0
+        if stackBull
+            scoreSlow := math.min(scoreSlow + 15.0, 100.0)
+        if stackBear
+            scoreSlow := math.max(scoreSlow - 20.0, -100.0)
+    else
+        scoreSlow := clamp01(0.5 - slowDistPct / (farSlowPct * 2.0)) * 200.0 - 100.0
+        if stackBear
+            scoreSlow := math.max(scoreSlow - 15.0, -100.0)
+        if stackBull
+            scoreSlow := math.min(scoreSlow + 10.0, 100.0)
+        // Rally into extra MA (200/300) in bear = resistance pressure
+        if not na(maX) and close > maX * 0.998 and close < maX * 1.01
+            scoreSlow := math.max(scoreSlow - 20.0, -100.0)
+
+// Regime MAs plotted later (after Pink) so Ribbon colors are not covered.
+
+// =============================================================================
+// RSI SWING BUBBLES — HH / LH / HL / LL + % + time + profit
+// HH=higher high · LH=lower high · HL=higher low · LL=lower low
+// =============================================================================
+rsi7 = ta.rsi(close, rsiLen)
+isOverbought = rsi7 >= rsiOB
+isOversold = rsi7 <= rsiOS
+
+formatElapsedTime(ms) =>
+    if na(ms) or ms < 0
+        ""
+    else if ms < 60000
+        str.tostring(math.floor(ms / 1000), "#") + " sec"
+    else if ms < 3600000
+        str.tostring(math.floor(ms / 60000), "#") + " min"
+    else if ms < 86400000
+        hrs = math.floor(ms / 3600000)
+        mins = math.floor((ms % 3600000) / 60000)
+        mins > 0 ? str.tostring(hrs, "#") + "h " + str.tostring(mins, "#") + "m" : str.tostring(hrs, "#") + " hrs"
+    else
+        days = math.floor(ms / 86400000)
+        hrs = math.floor((ms % 86400000) / 3600000)
+        hrs > 0 ? str.tostring(days, "#") + "d " + str.tostring(hrs, "#") + "h" : str.tostring(days, "#") + " days"
+
+clockStr() =>
+    showBubbleClock ? ("NY " + str.format_time(time, "HH:mm", "America/New_York") + " | IL " + str.format_time(time, "HH:mm", "Asia/Jerusalem")) : ""
+
+bubbleLabelText(code, price, elapsedMs, profitUsd, profitPct) =>
+    t = code + "\n" + str.tostring(price, format.mintick)
+    if showBubbleClock
+        t += "\n" + clockStr()
+    if showBubbleTime and not na(elapsedMs) and elapsedMs >= 0
+        t += "\n" + formatElapsedTime(elapsedMs)
+    if showBubbleProfit and not na(profitPct)
+        t += "\n" + (profitPct >= 0 ? "+" : "") + str.tostring(profitPct, "#.#") + "%"
+        if not na(profitUsd)
+            t += "  $" + str.tostring(profitUsd, "#.##")
+    t
+
+hhColors() => [color.red, color.white]
+lhColors() => [color.new(#E57373, 0), color.black]
+llColors() => [color.green, color.white]
+hlColors() => [color.new(#81C784, 0), color.black]
+
+var int laststate = 0
+var float hh = low
+var float ll = high
+var float last_actual_label_hh_price = 0.0
+var float last_actual_label_ll_price = 0.0
+var label labelhh = na
+var label labelll = na
+var int oppHhBar = na
+var float oppHhPrice = na
+var int oppLlBar = na
+var float oppLlPrice = na
+var string lastBubble = "—"
+var string lastBubbleQuality = "—"
+var string labelhhBase = ""
+var string labelllBase = ""
+
+obCode() => last_actual_label_hh_price < high ? "HH" : "LH"
+osCode() => last_actual_label_ll_price < low ? "HL" : "LL"
+
+calcSwingMetrics(isHigh, oppositeTime, oppositePrice) =>
+    elapsedMs = not na(oppositeTime) ? time - oppositeTime : float(na)
+    profitPct = not na(oppositePrice) and oppositePrice != 0 ? (isHigh ? (high - oppositePrice) / oppositePrice * 100.0 : (oppositePrice - low) / oppositePrice * 100.0) : float(na)
+    profitUsd = not na(profitPct) ? profitPct / 100.0 * bubbleCapital : float(na)
+    [elapsedMs, profitUsd, profitPct]
+
+makeHighLabel(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcSwingMetrics(true, oppLlBar, oppLlPrice)
+    txt = bubbleLabelText(code, high, elapsedMs, profitUsd, profitPct)
+    fc = code == "HH" ? color.red : color.new(#E57373, 0)
+    tc = code == "HH" ? color.white : color.black
+    label.new(time, na, txt, xloc=xloc.bar_time, yloc=yloc.abovebar, style=label.style_label_down, color=fc, textcolor=tc, size=size.tiny)
+
+makeLowLabel(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcSwingMetrics(false, oppHhBar, oppHhPrice)
+    txt = bubbleLabelText(code, low, elapsedMs, profitUsd, profitPct)
+    fc = code == "LL" ? color.green : color.new(#81C784, 0)
+    tc = code == "LL" ? color.white : color.black
+    label.new(time, na, txt, xloc=xloc.bar_time, yloc=yloc.belowbar, style=label.style_label_up, color=fc, textcolor=tc, size=size.tiny)
+
+moveHighLabel(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcSwingMetrics(true, oppLlBar, oppLlPrice)
+    txt = bubbleLabelText(code, high, elapsedMs, profitUsd, profitPct)
+    fc = code == "HH" ? color.red : color.new(#E57373, 0)
+    tc = code == "HH" ? color.white : color.black
+    if not na(labelhh)
+        label.set_x(labelhh, time)
+        label.set_y(labelhh, high)
+        label.set_text(labelhh, txt)
+        label.set_color(labelhh, fc)
+        label.set_textcolor(labelhh, tc)
+    txt
+
+moveLowLabel(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcSwingMetrics(false, oppHhBar, oppHhPrice)
+    txt = bubbleLabelText(code, low, elapsedMs, profitUsd, profitPct)
+    fc = code == "LL" ? color.green : color.new(#81C784, 0)
+    tc = code == "LL" ? color.white : color.black
+    if not na(labelll)
+        label.set_x(labelll, time)
+        label.set_y(labelll, low)
+        label.set_text(labelll, txt)
+        label.set_color(labelll, fc)
+        label.set_textcolor(labelll, tc)
+    txt
+
+newHighBubble = false
+newLowBubble = false
+
+if laststate == 2 and isOverbought
+    hh := high
+    code = obCode()
+    lastBubble := code
+    lastBubbleQuality := code == "HH" ? "HIGH" : "LOW"
+    last_actual_label_ll_price := not na(labelll) ? label.get_y(labelll) : ll
+    oppLlBar := not na(labelll) ? label.get_x(labelll) : na
+    oppLlPrice := not na(labelll) ? label.get_y(labelll) : na
+    if showBubbles
+        labelhh := makeHighLabel(code)
+        labelhhBase := label.get_text(labelhh)
+    newHighBubble := true
+    laststate := 1
+
+if laststate == 1 and isOversold
+    ll := low
+    code = osCode()
+    lastBubble := code
+    lastBubbleQuality := code == "LL" ? "LOW" : "HIGH"
+    last_actual_label_hh_price := not na(labelhh) ? label.get_y(labelhh) : hh
+    oppHhBar := not na(labelhh) ? label.get_x(labelhh) : na
+    oppHhPrice := not na(labelhh) ? label.get_y(labelhh) : na
+    if showBubbles
+        labelll := makeLowLabel(code)
+        labelllBase := label.get_text(labelll)
+    newLowBubble := true
+    laststate := 2
+
+if isOverbought
+    if high >= hh
+        hh := high
+        code = obCode()
+        lastBubble := code
+        lastBubbleQuality := code == "HH" ? "HIGH" : "LOW"
+        if showBubbles and not na(labelhh)
+            labelhhBase := moveHighLabel(code)
+        else if showBubbles and na(labelhh)
+            labelhh := makeHighLabel(code)
+            labelhhBase := label.get_text(labelhh)
+    laststate := 1
+
+if isOversold
+    if low <= ll
+        ll := low
+        code = osCode()
+        lastBubble := code
+        lastBubbleQuality := code == "LL" ? "LOW" : "HIGH"
+        if showBubbles and not na(labelll)
+            labelllBase := moveLowLabel(code)
+        else if showBubbles and na(labelll)
+            labelll := makeLowLabel(code)
+            labelllBase := label.get_text(labelll)
+    laststate := 2
+
+if laststate == 1 and high >= hh
+    hh := high
+    code = obCode()
+    lastBubble := code
+    lastBubbleQuality := code == "HH" ? "HIGH" : "LOW"
+    if showBubbles and not na(labelhh)
+        labelhhBase := moveHighLabel(code)
+
+if laststate == 2 and low <= ll
+    ll := low
+    code = osCode()
+    lastBubble := code
+    lastBubbleQuality := code == "LL" ? "LOW" : "HIGH"
+    if showBubbles and not na(labelll)
+        labelllBase := moveLowLabel(code)
+
+// Same alert flags as Trading Line Entry (HH/LH/HL/LL appear in alert dropdown)
+var bool alertHH = false
+var bool alertLH = false
+var bool alertHL = false
+var bool alertLL = false
+alertHH := false
+alertLH := false
+alertHL := false
+alertLL := false
+if newHighBubble or (isOverbought and high >= hh) or (laststate == 1 and high >= hh)
+    if lastBubble == "HH"
+        alertHH := true
+    else if lastBubble == "LH"
+        alertLH := true
+if newLowBubble or (isOversold and low <= ll) or (laststate == 2 and low <= ll)
+    if lastBubble == "LL"
+        alertLL := true
+    else if lastBubble == "HL"
+        alertHL := true
+
+// Bubble score: LL strong up · HL mild up · HH strong down · LH mild down
+scoreBubble = 0.0
+if lastBubble == "LL"
+    scoreBubble := nearSlow ? 70.0 : 50.0
+else if lastBubble == "HL"
+    scoreBubble := nearSlow ? 40.0 : 25.0
+else if lastBubble == "HH"
+    scoreBubble := nearSlow ? -70.0 : -50.0
+else if lastBubble == "LH"
+    scoreBubble := nearSlow ? -40.0 : -25.0
+
+// =============================================================================
+// 2-3) LARGE + SMALL PIVOT LINES
+// =============================================================================
+phL = ta.pivothigh(high, largePivotLen, largePivotLen)
+plL = ta.pivotlow(low, largePivotLen, largePivotLen)
+phS = ta.pivothigh(high, smallPivotLen, smallPivotLen)
+plS = ta.pivotlow(low, smallPivotLen, smallPivotLen)
+
+var float lLastHi = na
+var int lLastHiI = na
+var float lPrevHi = na
+var int lPrevHiI = na
+var float lLastLo = na
+var int lLastLoI = na
+var float lPrevLo = na
+var int lPrevLoI = na
+
+var float sLastHi = na
+var int sLastHiI = na
+var float sPrevHi = na
+var int sPrevHiI = na
+var float sLastLo = na
+var int sLastLoI = na
+var float sPrevLo = na
+var int sPrevLoI = na
+
+var float lOlderHi = na
+var int lOlderHiI = na
+var float lOlderLo = na
+var int lOlderLoI = na
+var float sOlderHi = na
+var int sOlderHiI = na
+var float sOlderLo = na
+var int sOlderLoI = na
+
+if not na(phL)
+    lOlderHi := lPrevHi
+    lOlderHiI := lPrevHiI
+    lPrevHi := lLastHi
+    lPrevHiI := lLastHiI
+    lLastHi := phL
+    lLastHiI := time[largePivotLen]
+if not na(plL)
+    lOlderLo := lPrevLo
+    lOlderLoI := lPrevLoI
+    lPrevLo := lLastLo
+    lPrevLoI := lLastLoI
+    lLastLo := plL
+    lLastLoI := time[largePivotLen]
+if not na(phS)
+    sOlderHi := sPrevHi
+    sOlderHiI := sPrevHiI
+    sPrevHi := sLastHi
+    sPrevHiI := sLastHiI
+    sLastHi := phS
+    sLastHiI := time[smallPivotLen]
+if not na(plS)
+    sOlderLo := sPrevLo
+    sOlderLoI := sPrevLoI
+    sPrevLo := sLastLo
+    sPrevLoI := sLastLoI
+    sLastLo := plS
+    sLastLoI := time[smallPivotLen]
+
+var line lHiLn = na
+var line lLoLn = na
+var line sHiLn = na
+var line sLoLn = na
+
+lHiLn := syncPivotLine(lHiLn, lPrevHiI, lPrevHi, lLastHiI, lLastHi, color.white, showPlots and showLargePivots)
+lLoLn := syncPivotLine(lLoLn, lPrevLoI, lPrevLo, lLastLoI, lLastLo, color.yellow, showPlots and showLargePivots)
+sHiLn := syncPivotLine(sHiLn, sPrevHiI, sPrevHi, sLastHiI, sLastHi, color.lime, showPlots and showSmallPivots)
+sLoLn := syncPivotLine(sLoLn, sPrevLoI, sPrevLo, sLastLoI, sLastLo, color.fuchsia, showPlots and showSmallPivots)
+
+lHiY = projY(lPrevHiI, lPrevHi, lLastHiI, lLastHi, time)
+lLoY = projY(lPrevLoI, lPrevLo, lLastLoI, lLastLo, time)
+sHiY = projY(sPrevHiI, sPrevHi, sLastHiI, sLastHi, time)
+sLoY = projY(sPrevLoI, sPrevLo, sLastLoI, sLastLo, time)
+
+// Line strength: 2 points = valid break line · 3rd aligned = stronger
+linePointCount(prevPx, prevI, lastPx, lastI, olderPx, olderI) =>
+    int n = 0
+    if not na(prevPx) and not na(lastPx) and not na(prevI) and not na(lastI) and prevI != lastI
+        n := 2
+        if not na(olderPx) and not na(olderI)
+            yAtOlder = prevPx + (lastPx - prevPx) * (olderI - prevI) / (lastI - prevI)
+            if not na(yAtOlder) and olderPx != 0 and math.abs(olderPx - yAtOlder) / math.abs(olderPx) * 100.0 <= pivotAlignPct
+                n := 3
+    n
+
+// Keep one older pivot behind prev for 3-point strength
+lHiPts = linePointCount(lPrevHi, lPrevHiI, lLastHi, lLastHiI, lOlderHi, lOlderHiI)
+lLoPts = linePointCount(lPrevLo, lPrevLoI, lLastLo, lLastLoI, lOlderLo, lOlderLoI)
+sHiPts = linePointCount(sPrevHi, sPrevHiI, sLastHi, sLastHiI, sOlderHi, sOlderHiI)
+sLoPts = linePointCount(sPrevLo, sPrevLoI, sLastLo, sLastLoI, sOlderLo, sOlderLoI)
+largeLinePts = math.max(lHiPts, lLoPts)
+smallLinePts = math.max(sHiPts, sLoPts)
+largeLineValid = largeLinePts >= 2
+smallLineValid = smallLinePts >= 2
+largeLineStrong = largeLinePts >= 3
+smallLineStrong = smallLinePts >= 3
+
+pivotState(hiY, loY, linePts) =>
+    string st = "NONE"
+    float sc = 0.0
+    float widthPct = na
+    float pos = na
+    string aim = "-"
+    if not na(hiY) and not na(loY)
+        up = math.max(hiY, loY)
+        dn = math.min(hiY, loY)
+        span = up - dn
+        widthPct := close != 0 ? span / close * 100.0 : na
+        pos := span != 0 ? (close - dn) / span : na
+        aim := na(pos) ? "-" : pos < 0.35 ? "Aim upper" : pos > 0.65 ? "Aim lower" : "Mid channel"
+        strMul = linePts >= 3 ? 1.25 : linePts >= 2 ? 1.0 : 0.55
+        if close > up
+            st := "ABOVE"
+            sc := 80.0 * strMul
+        else if close < dn
+            st := "BELOW"
+            sc := -80.0 * strMul
+        else
+            st := "INSIDE"
+            // Inside: lean toward nearer rail (where to push)
+            sc := na(pos) ? 0.0 : (pos - 0.5) * -60.0 * strMul
+    [st, sc, widthPct, pos, aim]
+
+[largeState, scoreLarge, largeWidthPct, largePos, largeAim] = pivotState(lHiY, lLoY, largeLinePts)
+[smallState, scoreSmall, smallWidthPct, smallPos, smallAim] = pivotState(sHiY, sLoY, smallLinePts)
+
+// Large break first, then small break = strong bar-break sequence
+var int largeBreakBar = na
+var int largeBreakDir = 0
+var int seqUpUntil = na
+var int seqDnUntil = na
+
+largeBreakUp = largeLineValid and largeState == "ABOVE" and largeState[1] != "ABOVE"
+largeBreakDn = largeLineValid and largeState == "BELOW" and largeState[1] != "BELOW"
+if largeBreakUp
+    largeBreakBar := bar_index
+    largeBreakDir := 1
+else if largeBreakDn
+    largeBreakBar := bar_index
+    largeBreakDir := -1
+
+smallBreakUp = smallLineValid and smallState == "ABOVE" and smallState[1] != "ABOVE"
+smallBreakDn = smallLineValid and smallState == "BELOW" and smallState[1] != "BELOW"
+seqUpFire = smallBreakUp and largeBreakDir == 1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars
+seqDnFire = smallBreakDn and largeBreakDir == -1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars
+if seqUpFire
+    seqUpUntil := bar_index + seqHoldBars
+if seqDnFire
+    seqDnUntil := bar_index + seqHoldBars
+seqUpHot = not na(seqUpUntil) and bar_index <= seqUpUntil
+seqDnHot = not na(seqDnUntil) and bar_index <= seqDnUntil
+if seqUpHot
+    scoreLarge := math.max(scoreLarge, largeLineStrong ? 100.0 : 90.0)
+    scoreSmall := math.max(scoreSmall, smallLineStrong ? 100.0 : 90.0)
+else if seqDnHot
+    scoreLarge := math.min(scoreLarge, largeLineStrong ? -100.0 : -90.0)
+    scoreSmall := math.min(scoreSmall, smallLineStrong ? -100.0 : -90.0)
+
+ptsTxt = "L" + str.tostring(largeLinePts) + "pt · S" + str.tostring(smallLinePts) + "pt"
+chanTxt = largeState == "INSIDE" ? largeAim + " · w " + (na(largeWidthPct) ? "-" : str.tostring(largeWidthPct, "#.##") + "%") : largeState == "ABOVE" ? "Above upper rail" : largeState == "BELOW" ? "Below lower rail" : "-"
+seqTxt = seqUpHot ? "Large→small UP · " + ptsTxt : seqDnHot ? "Large→small DOWN · " + ptsTxt : largeBreakDir == 1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars ? "Large UP · wait small · " + ptsTxt : largeBreakDir == -1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars ? "Large DOWN · wait small · " + ptsTxt : "No sequence · " + ptsTxt
+
+// =============================================================================
+// 4) MACD vs SIGNAL + HISTOGRAM
+// Lines above/below each other + both vs zero · angles · hist hooks
+// End of drop / end of rally = entry timing
+// =============================================================================
+[macdLine, signalLine, hist] = ta.macd(close, macdFast, macdSlow, macdSig)
+macdAbove = macdLine > signalLine
+macdCrossUp = ta.crossover(macdLine, signalLine)
+macdCrossDn = ta.crossunder(macdLine, signalLine)
+macdGap = math.abs(macdLine - signalLine)
+macdRange = math.max(ta.highest(math.abs(macdLine), 50) - ta.lowest(math.abs(macdLine), 50), math.abs(macdLine) * 0.01, 0.0000001)
+macdGapPct = macdGap / macdRange * 100.0
+macdGapPrev = math.abs(macdLine[1] - signalLine[1])
+macdApproaching = macdGap < macdGapPrev and macdGapPct <= macdNearPct
+macdEqual = macdGapPct <= macdEqualEps
+macdFlipSure = macdCrossUp or macdCrossDn or macdEqual
+macdFlipWarn = macdApproaching and not macdFlipSure
+
+// Flip direction: cross decides. On approach = histogram direction toward the cross.
+macdFlipUp = macdCrossUp or (macdEqual and hist >= 0 and hist > hist[1]) or (macdApproaching and not macdAbove and hist > hist[1])
+macdFlipDn = macdCrossDn or (macdEqual and hist <= 0 and hist < hist[1]) or (macdApproaching and macdAbove and hist < hist[1])
+
+macdRising = macdLine > macdLine[1]
+macdFalling = macdLine < macdLine[1]
+sigRising = signalLine > signalLine[1]
+sigFalling = signalLine < signalLine[1]
+histRising = hist > hist[1]
+histFalling = hist < hist[1]
+histAbove0 = hist > 0
+histBelow0 = hist < 0
+bothLinesBelow0 = macdLine < 0 and signalLine < 0
+bothLinesAbove0 = macdLine > 0 and signalLine > 0
+macdAngleOpen = math.abs(hist) > math.abs(hist[1])
+macdAngleClose = math.abs(hist) < math.abs(hist[1])
+
+// Hist hook: turn after stretch (classic end-of-move cue)
+histHookUp = histBelow0 and histRising and hist[1] <= hist[2]
+histHookDn = histAbove0 and histFalling and hist[1] >= hist[2]
+
+// End of decline: both lines under zero, angles/hist turning up
+macdEndDrop = bothLinesBelow0 and histRising and (macdRising or histHookUp) and (macdFlipUp or macdApproaching or histHookUp)
+// End of rally: both lines over zero, angles/hist turning down
+macdEndRally = bothLinesAbove0 and histFalling and (macdFalling or histHookDn) and (macdFlipDn or macdApproaching or histHookDn)
+
+macdStatusTxt = macdRising ? "MACD up" : macdFalling ? "MACD down" : "MACD flat"
+sigStatusTxt = sigRising ? "Sig up" : sigFalling ? "Sig down" : "Sig flat"
+histZoneTxt = histAbove0 ? "Hist+" : histBelow0 ? "Hist-" : "Hist0"
+histMoveTxt = histRising ? "hist rising" : histFalling ? "hist falling" : "hist flat"
+macdAngleTxt = macdAngleClose ? "Angle closing" : macdAngleOpen ? "Angle opening" : "Angle flat"
+macdNearTxt = "Gap " + str.tostring(macdGapPct, "#.#") + "%"
+macdZeroTxt = bothLinesBelow0 ? "Both under 0" : bothLinesAbove0 ? "Both over 0" : macdLine < 0 ? "MACD under 0" : "MACD over 0"
+macdEndTxt = macdEndDrop ? "END DROP" : macdEndRally ? "END RALLY" : histHookUp ? "Hist hook up" : histHookDn ? "Hist hook down" : ""
+
+scoreMacd = macdAbove ? (macdRising ? 70.0 : 45.0) : (macdFalling ? -70.0 : -45.0)
+if histRising and histBelow0
+    scoreMacd := scoreMacd + 12.0
+if histFalling and histAbove0
+    scoreMacd := scoreMacd - 12.0
+if macdAngleOpen and macdAbove
+    scoreMacd := scoreMacd + 15.0
+if macdAngleOpen and not macdAbove
+    scoreMacd := scoreMacd - 15.0
+if macdAngleClose and macdAbove
+    scoreMacd := scoreMacd - 10.0
+if macdAngleClose and not macdAbove
+    scoreMacd := scoreMacd + 10.0
+if macdEndDrop
+    scoreMacd := math.max(scoreMacd, 90.0)
+if macdEndRally
+    scoreMacd := math.min(scoreMacd, -90.0)
+if macdCrossUp or (macdEqual and macdFlipUp)
+    scoreMacd := 100.0
+if macdCrossDn or (macdEqual and macdFlipDn)
+    scoreMacd := -100.0
+if macdApproaching and macdFlipUp and not macdCrossUp
+    scoreMacd := math.max(scoreMacd, 85.0)
+if macdApproaching and macdFlipDn and not macdCrossDn
+    scoreMacd := math.min(scoreMacd, -85.0)
+
+macdEventHe = (
+     macdEndDrop and (macdCrossUp or macdFlipUp or histHookUp) ? "END DROP · " + histZoneTxt + " · " + histMoveTxt + " · " + macdAngleTxt :
+     macdEndRally and (macdCrossDn or macdFlipDn or histHookDn) ? "END RALLY · " + histZoneTxt + " · " + histMoveTxt + " · " + macdAngleTxt :
+     macdCrossUp ? "Cross up · flip sure · " + macdAngleTxt :
+     macdCrossDn ? "Cross down · flip sure · " + macdAngleTxt :
+     macdEqual and macdFlipUp ? "Equal · flip up · " + macdAngleTxt :
+     macdEqual and macdFlipDn ? "Equal · flip down · " + macdAngleTxt :
+     macdApproaching and macdFlipUp ? "Near cross up · " + macdNearTxt + " · " + macdAngleTxt :
+     macdApproaching and macdFlipDn ? "Near cross down · " + macdNearTxt + " · " + macdAngleTxt :
+     histHookUp ? "Hist hook up · " + macdZeroTxt :
+     histHookDn ? "Hist hook down · " + macdZeroTxt :
+     macdStatusTxt + " · " + sigStatusTxt + " · " + histZoneTxt + " · " + histMoveTxt + " · " + macdZeroTxt + " · " + macdNearTxt)
+// =============================================================================
+// 5) RSI 14
+// =============================================================================
+rsi14 = ta.rsi(close, rsi14Len)
+scoreRsi = 0.0
+if rsi14 >= 70
+    scoreRsi := isBull ? 40.0 : -60.0
+else if rsi14 <= 30
+    scoreRsi := isBull ? 60.0 : -40.0
+else if rsi14 >= 55
+    scoreRsi := 35.0
+else if rsi14 <= 45
+    scoreRsi := -35.0
+else
+    scoreRsi := 0.0
+
+rsiZone = rsi14 >= 70 ? "OB" : rsi14 <= 30 ? "OS" : rsi14 >= 55 ? "BULLISH" : rsi14 <= 45 ? "BEARISH" : "MID"
+
+// =============================================================================
+// 6) PINK SURGE (green / red / gray)
+// =============================================================================
+pFast = ta.sma(close, pinkFast)
+pMid = ta.sma(close, pinkMid)
+pSlow = ta.sma(close, pinkSlow)
+pinkSma100 = ta.sma(close, pinkSma100Len)
+pinkSma200 = ta.sma(close, pinkSma200Len)
+// Original Pink Surge SMMA channel (the other trail / band)
+pinkSmmaHigh = ta.rma(high, pinkChannelLen)
+pinkSmmaLow = ta.rma(low, pinkChannelLen)
+pinkPriceAvg = ta.rma(ohlc4, pinkPriceAvgLen)
+meetsDay = pinkDayThresh == 0 ? true : (not na(dayPct) and dayPct >= pinkDayThresh)
+pinkOn = pFast > pMid and pMid > pSlow and pFast > pFast[1] and pMid > pMid[1] and pSlow > pSlow[1] and macdLine > signalLine and meetsDay
+// Gray = not pink. Map to green/red/gray for display:
+// green = pink on; red = stacked down + macd below; gray = otherwise
+stackedDown = pFast < pMid and pMid < pSlow
+pinkColor = pinkOn ? "GREEN" : stackedDown and not macdAbove ? "RED" : "GRAY"
+scorePink = pinkOn ? 90.0 : pinkColor == "RED" ? -90.0 : 0.0
+pinkChannelStateCol = pinkPriceAvg > pinkSmmaHigh ? color.rgb(90, 140, 110) : pinkPriceAvg < pinkSmmaLow ? color.rgb(140, 90, 95) : color.rgb(110, 110, 120)
+
+// =============================================================================
+// 7) ZAP defaults: EMA 50/200 + 200 + EMA 300 · Fast off · MACD 12/26/9
+// =============================================================================
+f_zapMa(float src, int len, string t) =>
+    float e = ta.ema(src, len)
+    float w = ta.wma(src, len)
+    float r = ta.rma(src, len)
+    float s = ta.sma(src, len)
+    t == "EMA" ? e : t == "WMA" ? w : t == "RMA" ? r : s
+
+zapFastShort = f_zapMa(close, zapFastShortLen, zapMaTypeFast)
+zapFastLong = f_zapMa(close, zapFastLongLen, zapMaTypeFast)
+zapSlowShort = f_zapMa(close, zapSlowShortLen, zapMaTypeSlow)
+zapSlowLong = f_zapMa(close, zapSlowLongLen, zapMaTypeSlow)
+zapMa200 = f_zapMa(close, 200, zapMaTypeSlow)
+zapMa300 = f_zapMa(close, zap300Len, zapMaType300)
+
+[zapMacdLine, zapSignalLine, _] = ta.macd(close, zapMacdFast, zapMacdSlow, zapMacdSig)
+zapMacdUp = zapMacdLine > zapMacdLine[1] or zapMacdLine >= zapSignalLine
+zapMacdStrong = zapMacdLine > 0 and zapSignalLine > 0 and zapMacdLine > zapSignalLine
+zapMacdOk = zapUseStrictMacd ? zapMacdStrong : zapMacdUp
+
+followShort = candlesFollowZap == "Fast" ? zapFastShort : zapSlowShort
+zapBaseGreen = close > followShort and zapMacdOk
+zapColor = zapBaseGreen ? "GREEN" : "RED"
+if showZapRsiColors and rsi14 > 70
+    zapColor := "PURPLE"
+if showZapRsiColors and rsi14 < 30
+    zapColor := "GRAY"
+
+scoreZap = zapColor == "GREEN" ? 70.0 : zapColor == "RED" ? -70.0 : zapColor == "PURPLE" ? -25.0 : 25.0
+
+dist50 = zapSlowShort != 0 ? (close - zapSlowShort) / zapSlowShort * 100.0 : na
+dist200 = zapMa200 != 0 ? (close - zapMa200) / zapMa200 * 100.0 : na
+dist300 = zapMa300 != 0 ? (close - zapMa300) / zapMa300 * 100.0 : na
+near50 = not na(dist50) and math.abs(dist50) <= zapNearPct
+near200 = not na(dist200) and math.abs(dist200) <= zapNearPct
+near300 = not na(dist300) and math.abs(dist300) <= zapNearPct
+nearUpper = (near200 and close >= zapMa200) or (near300 and close >= zapMa300)
+nearLower = near50 and close <= zapSlowShort
+if nearUpper
+    scoreZap := scoreZap - 15.0
+if nearLower
+    scoreZap := scoreZap + 15.0
+if not na(dist50)
+    scoreZap := scoreZap + (dist50 > 0 ? 10.0 : -10.0)
+
+// MA / EMA stop levels: rising into resistance from below, or falling into support from above
+priceRising = close > close[1]
+priceFalling = close < close[1]
+f_nearLevel(lvl) =>
+    not na(lvl) and lvl != 0 and math.abs(close - lvl) / lvl * 100.0 <= zapNearPct
+
+stopResist = false
+stopSupport = false
+string maStopTxt = "No MA stop"
+string nearestResistName = ""
+string nearestSupportName = ""
+float nearestResist = na
+float nearestSupport = na
+// Resistance candidates above / at price
+if not na(slowLine) and slowLine >= close
+    nearestResist := slowLine
+    nearestResistName := slowName
+if not na(zapSlowShort) and zapSlowShort >= close and (na(nearestResist) or zapSlowShort < nearestResist)
+    nearestResist := zapSlowShort
+    nearestResistName := zapMaTypeSlow + " " + str.tostring(zapSlowShortLen)
+if not na(zapMa200) and zapMa200 >= close and (na(nearestResist) or zapMa200 < nearestResist)
+    nearestResist := zapMa200
+    nearestResistName := zapMaTypeSlow + " 200"
+if not na(zapMa300) and zapMa300 >= close and (na(nearestResist) or zapMa300 < nearestResist)
+    nearestResist := zapMa300
+    nearestResistName := zapMaType300 + " " + str.tostring(zap300Len)
+// Support candidates below / at price
+if not na(slowLine) and slowLine <= close
+    nearestSupport := slowLine
+    nearestSupportName := slowName
+if not na(zapSlowShort) and zapSlowShort <= close and (na(nearestSupport) or zapSlowShort > nearestSupport)
+    nearestSupport := zapSlowShort
+    nearestSupportName := zapMaTypeSlow + " " + str.tostring(zapSlowShortLen)
+if not na(zapMa200) and zapMa200 <= close and (na(nearestSupport) or zapMa200 > nearestSupport)
+    nearestSupport := zapMa200
+    nearestSupportName := zapMaTypeSlow + " 200"
+if not na(zapMa300) and zapMa300 <= close and (na(nearestSupport) or zapMa300 > nearestSupport)
+    nearestSupport := zapMa300
+    nearestSupportName := zapMaType300 + " " + str.tostring(zap300Len)
+
+risingIntoResist = priceRising and f_nearLevel(nearestResist) and not na(nearestResist) and close <= nearestResist
+fallingIntoSupport = priceFalling and f_nearLevel(nearestSupport) and not na(nearestSupport) and close >= nearestSupport
+// Bear: MAs above are stops on rallies. Bull: MAs below are stops on dips.
+if risingIntoResist
+    stopResist := true
+    scoreZap := scoreZap - (isBull ? 20.0 : 35.0)
+    maStopTxt := "Stop resist " + nearestResistName + " @ " + str.tostring(nearestResist, format.mintick)
+if fallingIntoSupport
+    stopSupport := true
+    scoreZap := scoreZap + (isBull ? 35.0 : 20.0)
+    maStopTxt := "Stop support " + nearestSupportName + " @ " + str.tostring(nearestSupport, format.mintick)
+if stopResist and stopSupport
+    maStopTxt := "Stops: " + nearestResistName + " / " + nearestSupportName
+
+zapLineColSlow = zapColor == "GREEN" ? color.green : zapColor == "RED" ? color.red : zapColor == "PURPLE" ? color.purple : color.gray
+zapLineColFast = zapLineColSlow
+
+zapFastFillCol = zapFastShort > zapFastLong ? color.new(color.green, zapFastFillTrans) : color.new(color.red, zapFastFillTrans)
+zapSlowFillCol = zapSlowShort > zapSlowLong ? color.new(color.blue, zapSlowFillTrans) : color.new(color.orange, zapSlowFillTrans)
+
+pZapFastS = plot(showZapMa and showZapFast ? zapFastShort : na, "Zap Fast Short EMA 9", color=zapLineColFast, linewidth=2)
+pZapFastL = plot(showZapMa and showZapFast ? zapFastLong : na, "Zap Fast Long EMA 21", color=color.new(color.orange, 40), linewidth=1)
+fill(pZapFastS, pZapFastL, color=showZapMa and showZapFast and showZapFastFill ? zapFastFillCol : na)
+
+pZapSlowS = plot(showZapMa and showZapSlow ? zapSlowShort : na, "Zap Slow Short EMA 50", color=zapLineColSlow, linewidth=2)
+pZapSlowL = plot(showZapMa and showZapSlow ? zapSlowLong : na, "Zap Slow Long EMA 200", color=color.new(color.blue, 40), linewidth=1)
+fill(pZapSlowS, pZapSlowL, color=showZapMa and showZapSlow and showZapSlowFill ? zapSlowFillCol : na)
+
+plot(showZapMa and showZap200 ? zapMa200 : na, "Zap MA 200", color=color.blue, linewidth=1)
+plot(showZapMa and showZap300 ? zapMa300 : na, "Zap EMA 300", color=color.orange, linewidth=2)
+
+// Pink Surge fills: Runline vs SMA100 AND Runline vs SMA200 (different colors)
+// 100 closer trail: aqua↔teal above · fuchsia↔purple below
+// 200 original trail: lime↔green above · red↔maroon below
+pinkRunCol = pinkOn ? color.rgb(255, 105, 180) : color.gray
+// Never draw close as a visible series — it duplicates price and desyncs zoom/scale.
+pinkRunPlot = plot(showPinkRunline ? close : na, "Price Runline", color=pinkRunCol, display=display.none)
+pinkSma100Plot = plot(pinkSma100, "SMA 100", color=showPinkSma100 ? color.fuchsia : color.new(color.fuchsia, 100), linewidth=2)
+// Hide Pink SMA200 line when it is the same series as Ribbon slow/extra (e.g. 4H slow = SMA200).
+// Keep the plot for fill only (fully transparent).
+pink200DupRegime = (showMaSlow and typSlow == 2 and lenSlow == pinkSma200Len) or (showMaX and typX == 2 and lenX == pinkSma200Len)
+pinkSma200Plot = plot(pinkSma200, "SMA 200", color=showPinkSma200 and not pink200DupRegime ? color.new(color.blue, 0) : color.new(color.blue, 100), linewidth=2)
+plot(showPinkLines ? pFast : na, "Pink SMA 20", color=color.gray, linewidth=1)
+plot(showPinkLines ? pMid : na, "Pink SMA 50", color=color.gray, linewidth=1)
+
+pinkDist100 = pinkSma100 != 0 ? (close - pinkSma100) / pinkSma100 * 100.0 : na
+pinkInten100 = na(pinkDist100) ? na : math.min(math.abs(pinkDist100) / pinkHeatMaxDist, 1.0)
+pinkNeu100 = not na(pinkDist100) and math.abs(pinkDist100) <= pinkHeatNeutralPct
+col100Above = na(pinkInten100) ? color.gray : color.from_gradient(pinkInten100, 0, 1, color.aqua, color.teal)
+col100Below = na(pinkInten100) ? color.gray : color.from_gradient(pinkInten100, 0, 1, color.fuchsia, color.purple)
+fill100Col = na(pinkDist100) ? color.gray : pinkNeu100 ? color.gray : close >= pinkSma100 ? col100Above : col100Below
+
+pinkDist200 = pinkSma200 != 0 ? (close - pinkSma200) / pinkSma200 * 100.0 : na
+pinkInten200 = na(pinkDist200) ? na : math.min(math.abs(pinkDist200) / pinkHeatMaxDist, 1.0)
+pinkNeu200 = not na(pinkDist200) and math.abs(pinkDist200) <= pinkHeatNeutralPct
+col200Above = na(pinkInten200) ? color.gray : color.from_gradient(pinkInten200, 0, 1, color.lime, color.green)
+col200Below = na(pinkInten200) ? color.gray : color.from_gradient(pinkInten200, 0, 1, color.red, color.maroon)
+fill200Col = na(pinkDist200) ? color.gray : pinkNeu200 ? color.gray : close >= pinkSma200 ? col200Above : col200Below
+
+fill(pinkRunPlot, pinkSma100Plot, color=showPinkFill100 ? color.new(fill100Col, pinkHeatOpacity100) : na, title="Fill Runline-SMA100")
+fill(pinkRunPlot, pinkSma200Plot, color=showPinkFill200 ? color.new(fill200Col, pinkHeatOpacity200) : na, title="Fill Runline-SMA200")
+
+// SMMA channel trail — calm soft edges (not white/yellow)
+pinkChanHiPlot = plot(showPinkChannel ? pinkSmmaHigh : na, "Channel High (SMMA)", color=color.rgb(150, 160, 175), linewidth=2)
+pinkChanLoPlot = plot(showPinkChannel ? pinkSmmaLow : na, "Channel Low (SMMA)", color=color.rgb(145, 150, 165), linewidth=2)
+fill(pinkChanHiPlot, pinkChanLoPlot, color=showPinkChannel ? color.new(pinkChannelStateCol, pinkChannelFillOpacity) : na, title="Pink SMMA channel trail")
+plot(showPinkChannel ? pinkPriceAvg : na, "Price Average (OHLC4)", color=color.rgb(130, 135, 145), linewidth=1)
+
+// Ribbon-by-TF MAs on top (bear slow = red #FF1744 · not covered by Pink SMA200)
+plot(showPlots and showMaFast and not na(maFast) ? maFast : na, "MA Fast", color=colFast, linewidth=wFast)
+plot(showPlots and showMaMid and not na(maMid) ? maMid : na, "MA Mid", color=colMid, linewidth=wMid)
+plot(showPlots and showMaSlow and not na(maSlow) ? maSlow : na, "MA Slow", color=colSlow, linewidth=wSlowPlot)
+plot(showPlots and showMaX and not na(maX) ? maX : na, "MA Extra", color=colX, linewidth=wXPlot)
+plot(showPlots and showMaY and not na(maY) ? maY : na, "MA 300", color=colY, linewidth=wYPlot)
+
+// Zap backgrounds / candles (optional). Pink column bg off by default.
+zapBgCol = zapColor == "GREEN" ? color.new(#00BCD4, zapBgTrans) : zapColor == "RED" ? color.new(#FF5722, zapBgTrans) : zapColor == "PURPLE" ? color.new(#9C27B0, zapBgTrans) : zapColor == "GRAY" ? color.new(#607D8B, zapBgTrans) : na
+zapCandleCol = zapColor == "GREEN" ? #00C853 : zapColor == "RED" ? #FF1744 : zapColor == "PURPLE" ? #9C27B0 : #78909C
+pinkBgCol = pinkOn ? color.new(color.rgb(255, 105, 180), pinkBgTrans) : pinkColor == "RED" ? color.new(#8B0000, pinkBgTrans) : na
+bgcolor(showZapBg ? zapBgCol : na, title="Zap background")
+barcolor(showZapCandleColors ? zapCandleCol : na)
+bgcolor(showPinkBg ? pinkBgCol : na, title="Pink Surge background")
+
+
+// =============================================================================
+// ALERTS — chart HH/LH/HL/LL only (multi-TF facts = BTC Stack Hook)
+// =============================================================================
+chartBubbleAlert = (enableHHAlert and alertHH) or (enableLHAlert and alertLH) or (enableHLAlert and alertHL) or (enableLLAlert and alertLL)
+if enableBubbleHook and chartBubbleAlert and barstate.isconfirmed
+    alert('{"type":"chart_bubble","schema":"display_ping","symbol":"' + syminfo.ticker + '","chartTf":"' + timeframe.period + '","bubble":"' + lastBubble + '","price":' + str.tostring(close, format.mintick) + ',"note":"Use BTC Stack Hook for full facts_v2"}', alert.freq_once_per_bar)
+
+alertcondition(enableHHAlert and alertHH, 'HH', 'Higher High detected!')
+alertcondition(enableLHAlert and alertLH, 'LH', 'Lower High detected!')
+alertcondition(enableHLAlert and alertHL, 'HL', 'Higher Low detected!')
+alertcondition(enableLLAlert and alertLL, 'LL', 'Lower Low detected!')

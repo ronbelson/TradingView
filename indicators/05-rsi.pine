@@ -1,0 +1,396 @@
+//@version=6
+indicator(title="Relative Strength Index", shorttitle="RSI", format=format.price, precision=2, max_lines_count=500, max_labels_count=500)
+
+rsiLengthInput = input.int(7, minval=1, title="RSI Length (=7)", group="RSI Settings")
+rsiSourceInput = input.source(close, "Source", group="RSI Settings")
+calculateDivergence = input.bool(false, title="Calculate Divergence", group="RSI Settings", display=display.none, tooltip="Calculating divergences is needed in order for divergence alerts to fire.")
+
+// Same defaults as meter bubbles: RSI len 4 · OB 70 · OS 30.
+// RSI pane flipped vs price: green high above · red low below. Ticks = meter colors.
+gBub = "Bubble paint (no labels)"
+paintBubbles = input.bool(true, "Color RSI by bubble swings", group=gBub)
+showBubbleTicks = input.bool(true, "Show bubble tick", group=gBub, tooltip="Same crawl as meter bubbles. Thin dash at bubble bar. No letters.")
+bubRsiLen = input.int(4, "Bubble RSI len (=4)", minval=1, group=gBub)
+bubOB = input.int(70, "Overbought", minval=51, maxval=100, group=gBub)
+bubOS = input.int(30, "Oversold", minval=1, maxval=49, group=gBub)
+fillAboveTransp = input.int(78, "Green fill above (transp)", minval=0, maxval=95, group=gBub)
+fillBelowTransp = input.int(78, "Red fill below (transp)", minval=0, maxval=95, group=gBub)
+tickGapPts = input.float(4.0, "Tick gap from RSI (pts)", minval=0.2, maxval=12, step=0.1, group=gBub)
+colHH = input.color(color.green, "HH high (above)", group=gBub)
+colLH = input.color(color.new(#81C784, 0), "LH high (above)", group=gBub)
+colLL = input.color(color.red, "LL low (below)", group=gBub)
+colHL = input.color(color.new(#E57373, 0), "HL low (below)", group=gBub)
+colIdle = input.color(#7E57C2, "No swing yet", group=gBub)
+dotHH = input.color(color.red, "Tick HH", group=gBub)
+dotLH = input.color(color.new(#E57373, 0), "Tick LH", group=gBub)
+dotLL = input.color(color.green, "Tick LL", group=gBub)
+dotHL = input.color(color.new(#81C784, 0), "Tick HL", group=gBub)
+
+change = ta.change(rsiSourceInput)
+up = ta.rma(math.max(change, 0), rsiLengthInput)
+down = ta.rma(-math.min(change, 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+
+// Bubble crawl on price highs/lows while bubble-RSI is OB/OS (meter rules)
+bubRsi = ta.rsi(close, bubRsiLen)
+isOverbought = bubRsi >= bubOB
+isOversold = bubRsi <= bubOS
+
+var int laststate = 0
+var float hh = low
+var float ll = high
+var float last_actual_label_hh_price = 0.0
+var float last_actual_label_ll_price = 0.0
+var string lastBubble = ""
+var label tickHh = na
+var label tickLl = na
+
+obCode() => last_actual_label_hh_price < high ? "HH" : "LH"
+osCode() => last_actual_label_ll_price < low ? "HL" : "LL"
+
+highTickCol(code) => code == "HH" ? dotHH : dotLH
+lowTickCol(code) => code == "LL" ? dotLL : dotHL
+
+tickYHigh() => math.min(rsi + tickGapPts, 100.0)
+tickYLow() => math.max(rsi - tickGapPts, 0.0)
+
+// Meter-like: high tick above RSI, low tick below RSI. Thick dash, no letters/circles.
+makeHighTick(code) =>
+    label.new(bar_index, tickYHigh(), "━", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=highTickCol(code), color=color.new(color.white, 100), size=size.large)
+
+makeLowTick(code) =>
+    label.new(bar_index, tickYLow(), "━", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=lowTickCol(code), color=color.new(color.white, 100), size=size.large)
+
+moveHighTick(code) =>
+    if not na(tickHh)
+        label.set_xy(tickHh, bar_index, tickYHigh())
+        label.set_textcolor(tickHh, highTickCol(code))
+
+moveLowTick(code) =>
+    if not na(tickLl)
+        label.set_xy(tickLl, bar_index, tickYLow())
+        label.set_textcolor(tickLl, lowTickCol(code))
+
+if paintBubbles or showBubbleTicks
+    if laststate == 2 and isOverbought
+        hh := high
+        code = obCode()
+        lastBubble := code
+        last_actual_label_ll_price := ll
+        if showBubbleTicks
+            tickHh := makeHighTick(code)
+        laststate := 1
+
+    if laststate == 1 and isOversold
+        ll := low
+        code = osCode()
+        lastBubble := code
+        last_actual_label_hh_price := hh
+        if showBubbleTicks
+            tickLl := makeLowTick(code)
+        laststate := 2
+
+    if isOverbought
+        if high >= hh
+            hh := high
+            code = obCode()
+            lastBubble := code
+            if showBubbleTicks and not na(tickHh)
+                moveHighTick(code)
+            else if showBubbleTicks and na(tickHh)
+                tickHh := makeHighTick(code)
+        laststate := 1
+
+    if isOversold
+        if low <= ll
+            ll := low
+            code = osCode()
+            lastBubble := code
+            if showBubbleTicks and not na(tickLl)
+                moveLowTick(code)
+            else if showBubbleTicks and na(tickLl)
+                tickLl := makeLowTick(code)
+        laststate := 2
+
+    if laststate == 1 and high >= hh
+        hh := high
+        code = obCode()
+        lastBubble := code
+        if showBubbleTicks and not na(tickHh)
+            moveHighTick(code)
+
+    if laststate == 2 and low <= ll
+        ll := low
+        code = osCode()
+        lastBubble := code
+        if showBubbleTicks and not na(tickLl)
+            moveLowTick(code)
+
+isHighSwing = paintBubbles and (lastBubble == "HH" or lastBubble == "LH")
+isLowSwing = paintBubbles and (lastBubble == "LL" or lastBubble == "HL")
+lineCol = not paintBubbles ? colIdle : lastBubble == "HH" ? colHH : lastBubble == "LH" ? colLH : lastBubble == "LL" ? colLL : lastBubble == "HL" ? colHL : colIdle
+fillUpCol = isHighSwing ? color.new(lastBubble == "HH" ? colHH : colLH, fillAboveTransp) : na
+fillDnCol = isLowSwing ? color.new(lastBubble == "LL" ? colLL : colHL, fillBelowTransp) : na
+
+rsiPlot = plot(rsi, "RSI", color=lineCol, linewidth=2)
+rsiTop = plot(100, "RSI top", color=na, display=display.none, editable=false)
+rsiBot = plot(0, "RSI bot", color=na, display=display.none, editable=false)
+midLinePlot = plot(50, color=na, editable=false, display=display.none)
+// Swing fills first (under). Classic 80/30 zones last (on top).
+fill(rsiPlot, rsiTop, color=fillUpCol, title="High swing fill (above)")
+fill(rsiPlot, rsiBot, color=fillDnCol, title="Low swing fill (below)")
+fill(rsiPlot, midLinePlot, 100, 80, top_color=color.new(color.green, 0), bottom_color=color.new(color.green, 100), title="Above 80")
+fill(rsiPlot, midLinePlot, 30, 0, top_color=color.new(color.red, 100), bottom_color=color.new(color.red, 0), title="Below 30")
+
+rsiUpperBand = hline(80, "RSI Upper Band (80)", color=#787B86)
+midline = hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+rsiLowerBand = hline(30, "RSI Lower Band", color=#787B86)
+
+// Smoothing MA inputs
+GRP = "Smoothing"
+TT_BB = "Only applies when 'SMA + Bollinger Bands' is selected. Determines the distance between the SMA and the bands."
+maTypeInput = input.string("SMA", "Type", options=["None", "SMA", "SMA + Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group=GRP, display=display.none)
+var isBB = maTypeInput == "SMA + Bollinger Bands"
+maLengthInput = input.int(14, "Length", group=GRP, display=display.none, active=maTypeInput != "None")
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, step=0.5, tooltip=TT_BB, group=GRP, display=display.none, active=isBB)
+var enableMA = maTypeInput != "None"
+
+ma(source, length, MAtype) =>
+    switch MAtype
+        "SMA"                   => ta.sma(source, length)
+        "SMA + Bollinger Bands" => ta.sma(source, length)
+        "EMA"                   => ta.ema(source, length)
+        "SMMA (RMA)"            => ta.rma(source, length)
+        "WMA"                   => ta.wma(source, length)
+        "VWMA"                  => ta.vwma(source, length)
+
+smoothingMA = enableMA ? ma(rsi, maLengthInput, maTypeInput) : na
+smoothingStDev = isBB ? ta.stdev(rsi, maLengthInput) * bbMultInput : na
+plot(smoothingMA, "RSI-based MA", color=#1565C0, display=enableMA ? display.all : display.none, editable=enableMA)
+bbUpperBand = plot(smoothingMA + smoothingStDev, title="Upper Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+bbLowerBand = plot(smoothingMA - smoothingStDev, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+fill(bbUpperBand, bbLowerBand, color=isBB ? color.new(color.green, 90) : na, title="Bollinger Bands Background Fill", display=isBB ? display.all : display.none, editable=isBB)
+
+// =============================================================================
+// RSI PIVOT LINES (Large + Small, 3-point strength, like candle stack)
+// =============================================================================
+gPivot = "RSI Pivot Lines"
+largePivotLen = input.int(5, "Large pivot", minval=1, maxval=50, group=gPivot)
+smallPivotLen = input.int(1, "Small pivot", minval=1, maxval=50, group=gPivot)
+showLargePivots = input.bool(true, "Show large pivot", group=gPivot)
+showSmallPivots = input.bool(true, "Show small pivot", group=gPivot)
+extendPivots = input.bool(true, "Extend lines right", group=gPivot)
+pivotAlignPts = input.float(1.5, "3rd pivot align (RSI pts)", minval=0.25, maxval=10, step=0.25, group=gPivot, tooltip="3rd pivot within this many RSI points of the 2-point line = stronger (3+).")
+seqMaxBars = input.int(12, "Small after large max bars", minval=1, maxval=50, group=gPivot)
+seqHoldBars = input.int(6, "Sequence stay hot bars", minval=1, maxval=30, group=gPivot)
+showPivotStatus = input.bool(true, "Show status label", group=gPivot)
+largeHiCol = input.color(color.new(color.white, 10), "Large high line", group=gPivot)
+largeLoCol = input.color(color.new(color.yellow, 10), "Large low line", group=gPivot)
+smallHiCol = input.color(color.new(color.lime, 10), "Small high line", group=gPivot)
+smallLoCol = input.color(color.new(color.fuchsia, 10), "Small low line", group=gPivot)
+
+projY(i1, y1, i2, y2, i) =>
+    float y = na
+    if not na(i1) and not na(i2) and not na(y1) and not na(y2) and i1 != i2 and not na(i)
+        y := y1 + (y2 - y1) * (i - i1) / (i2 - i1)
+    y
+
+syncPivotLine(ln, prevI, prevY, lastI, lastY, col, w, show) =>
+    line out = ln
+    if barstate.islast
+        if show and not na(prevI) and not na(lastI) and not na(prevY) and not na(lastY)
+            if na(out)
+                out := line.new(prevI, prevY, lastI, lastY, color=col, width=w, extend=extendPivots ? extend.right : extend.none)
+            else
+                line.set_xy1(out, prevI, prevY)
+                line.set_xy2(out, lastI, lastY)
+                line.set_extend(out, extendPivots ? extend.right : extend.none)
+                line.set_color(out, col)
+                line.set_width(out, w)
+        else if not na(out)
+            line.delete(out)
+            out := na
+    out
+
+trackPivots(float ph, float pl, int len) =>
+    var float lastHi = na
+    var int lastHiI = na
+    var float prevHi = na
+    var int prevHiI = na
+    var float olderHi = na
+    var int olderHiI = na
+    var float lastLo = na
+    var int lastLoI = na
+    var float prevLo = na
+    var int prevLoI = na
+    var float olderLo = na
+    var int olderLoI = na
+    if not na(ph)
+        olderHi := prevHi
+        olderHiI := prevHiI
+        prevHi := lastHi
+        prevHiI := lastHiI
+        lastHi := ph
+        lastHiI := bar_index - len
+    if not na(pl)
+        olderLo := prevLo
+        olderLoI := prevLoI
+        prevLo := lastLo
+        prevLoI := lastLoI
+        lastLo := pl
+        lastLoI := bar_index - len
+    [prevHi, prevHiI, lastHi, lastHiI, olderHi, olderHiI, prevLo, prevLoI, lastLo, lastLoI, olderLo, olderLoI]
+
+linePointCount(prevY, prevI, lastY, lastI, olderY, olderI, alignPts) =>
+    int n = 0
+    if not na(prevY) and not na(lastY) and not na(prevI) and not na(lastI) and prevI != lastI
+        n := 2
+        if not na(olderY) and not na(olderI)
+            yAtOlder = prevY + (lastY - prevY) * (olderI - prevI) / (lastI - prevI)
+            if not na(yAtOlder) and math.abs(olderY - yAtOlder) <= alignPts
+                n := 3
+    n
+
+pivotState(float hiY, float loY, int linePts) =>
+    string st = "NONE"
+    float span = na
+    float pos = na
+    string aim = "-"
+    if not na(hiY) and not na(loY)
+        up = math.max(hiY, loY)
+        dn = math.min(hiY, loY)
+        span := up - dn
+        pos := span != 0 ? (rsi - dn) / span : na
+        aim := na(pos) ? "-" : pos < 0.35 ? "Aim upper" : pos > 0.65 ? "Aim lower" : "Mid channel"
+        if rsi > up
+            st := "ABOVE"
+        else if rsi < dn
+            st := "BELOW"
+        else
+            st := "INSIDE"
+    [st, span, pos, aim, linePts >= 3, linePts >= 2]
+
+phL = ta.pivothigh(rsi, largePivotLen, largePivotLen)
+plL = ta.pivotlow(rsi, largePivotLen, largePivotLen)
+phS = ta.pivothigh(rsi, smallPivotLen, smallPivotLen)
+plS = ta.pivotlow(rsi, smallPivotLen, smallPivotLen)
+
+[lPrevHi, lPrevHiI, lLastHi, lLastHiI, lOlderHi, lOlderHiI, lPrevLo, lPrevLoI, lLastLo, lLastLoI, lOlderLo, lOlderLoI] = trackPivots(phL, plL, largePivotLen)
+[sPrevHi, sPrevHiI, sLastHi, sLastHiI, sOlderHi, sOlderHiI, sPrevLo, sPrevLoI, sLastLo, sLastLoI, sOlderLo, sOlderLoI] = trackPivots(phS, plS, smallPivotLen)
+
+lHiPts = linePointCount(lPrevHi, lPrevHiI, lLastHi, lLastHiI, lOlderHi, lOlderHiI, pivotAlignPts)
+lLoPts = linePointCount(lPrevLo, lPrevLoI, lLastLo, lLastLoI, lOlderLo, lOlderLoI, pivotAlignPts)
+sHiPts = linePointCount(sPrevHi, sPrevHiI, sLastHi, sLastHiI, sOlderHi, sOlderHiI, pivotAlignPts)
+sLoPts = linePointCount(sPrevLo, sPrevLoI, sLastLo, sLastLoI, sOlderLo, sOlderLoI, pivotAlignPts)
+largeLinePts = math.max(lHiPts, lLoPts)
+smallLinePts = math.max(sHiPts, sLoPts)
+
+lHiW = lHiPts >= 3 ? 3 : 2
+lLoW = lLoPts >= 3 ? 3 : 2
+sHiW = sHiPts >= 3 ? 2 : 1
+sLoW = sLoPts >= 3 ? 2 : 1
+
+var line lHiLn = na
+var line lLoLn = na
+var line sHiLn = na
+var line sLoLn = na
+
+lHiLn := syncPivotLine(lHiLn, lPrevHiI, lPrevHi, lLastHiI, lLastHi, largeHiCol, lHiW, showLargePivots)
+lLoLn := syncPivotLine(lLoLn, lPrevLoI, lPrevLo, lLastLoI, lLastLo, largeLoCol, lLoW, showLargePivots)
+sHiLn := syncPivotLine(sHiLn, sPrevHiI, sPrevHi, sLastHiI, sLastHi, smallHiCol, sHiW, showSmallPivots)
+sLoLn := syncPivotLine(sLoLn, sPrevLoI, sPrevLo, sLastLoI, sLastLo, smallLoCol, sLoW, showSmallPivots)
+
+lHiY = projY(lPrevHiI, lPrevHi, lLastHiI, lLastHi, bar_index)
+lLoY = projY(lPrevLoI, lPrevLo, lLastLoI, lLastLo, bar_index)
+sHiY = projY(sPrevHiI, sPrevHi, sLastHiI, sLastHi, bar_index)
+sLoY = projY(sPrevLoI, sPrevLo, sLastLoI, sLastLo, bar_index)
+
+[largeState, largeSpan, largePos, largeAim, largeStrong, largeValid] = pivotState(lHiY, lLoY, largeLinePts)
+[smallState, smallSpan, smallPos, smallAim, smallStrong, smallValid] = pivotState(sHiY, sLoY, smallLinePts)
+
+var int largeBreakBar = na
+var int largeBreakDir = 0
+var int seqUpUntil = na
+var int seqDnUntil = na
+
+largeBreakUp = largeValid and largeState == "ABOVE" and largeState[1] != "ABOVE"
+largeBreakDn = largeValid and largeState == "BELOW" and largeState[1] != "BELOW"
+if largeBreakUp
+    largeBreakBar := bar_index
+    largeBreakDir := 1
+else if largeBreakDn
+    largeBreakBar := bar_index
+    largeBreakDir := -1
+
+smallBreakUp = smallValid and smallState == "ABOVE" and smallState[1] != "ABOVE"
+smallBreakDn = smallValid and smallState == "BELOW" and smallState[1] != "BELOW"
+seqUpFire = smallBreakUp and largeBreakDir == 1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars
+seqDnFire = smallBreakDn and largeBreakDir == -1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars
+if seqUpFire
+    seqUpUntil := bar_index + seqHoldBars
+if seqDnFire
+    seqDnUntil := bar_index + seqHoldBars
+seqUpHot = not na(seqUpUntil) and bar_index <= seqUpUntil
+seqDnHot = not na(seqDnUntil) and bar_index <= seqDnUntil
+
+ptsTxt = "L" + str.tostring(largeLinePts) + "pt · S" + str.tostring(smallLinePts) + "pt"
+seqTxt = seqUpHot ? "Large→small UP · " + ptsTxt : seqDnHot ? "Large→small DOWN · " + ptsTxt : largeBreakDir == 1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars ? "Large UP · wait small · " + ptsTxt : largeBreakDir == -1 and not na(largeBreakBar) and (bar_index - largeBreakBar) <= seqMaxBars ? "Large DOWN · wait small · " + ptsTxt : ptsTxt
+statusTxt = largeState + " / " + smallState + " · " + seqTxt
+
+var label pivotLbl = na
+if barstate.islast and showPivotStatus
+    if na(pivotLbl)
+        pivotLbl := label.new(bar_index, 95, statusTxt, style=label.style_label_left, color=color.new(#1e222d, 15), textcolor=color.white, size=size.small)
+    else
+        label.set_xy(pivotLbl, bar_index, 95)
+        label.set_text(pivotLbl, statusTxt)
+else if not na(pivotLbl)
+    label.delete(pivotLbl)
+    pivotLbl := na
+
+// Pivot sequence hot: no bgcolor stripes (kept alerts only)
+alertcondition(largeBreakUp, title="RSI Large pivot break UP", message="RSI broke above large pivot channel.")
+alertcondition(largeBreakDn, title="RSI Large pivot break DOWN", message="RSI broke below large pivot channel.")
+alertcondition(seqUpFire, title="RSI Large→Small UP sequence", message="RSI large break UP then small break UP within window.")
+alertcondition(seqDnFire, title="RSI Large→Small DOWN sequence", message="RSI large break DOWN then small break DOWN within window.")
+
+// Divergence
+lookbackRight = 5
+lookbackLeft = 5
+rangeUpper = 60
+rangeLower = 5
+bearColor = color.red
+bullColor = color.green
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+_inRange(bool cond) =>
+    bars = ta.barssince(cond)
+    rangeLower <= bars and bars <= rangeUpper
+
+plFound = false
+phFound = false
+bullCond = false
+bearCond = false
+rsiLBR = rsi[lookbackRight]
+
+if calculateDivergence
+    plFound := not na(ta.pivotlow(rsi, lookbackLeft, lookbackRight))
+    rsiHL = rsiLBR > ta.valuewhen(plFound, rsiLBR, 1) and _inRange(plFound[1])
+    lowLBR = low[lookbackRight]
+    priceLL = lowLBR < ta.valuewhen(plFound, lowLBR, 1)
+    bullCond := priceLL and rsiHL and plFound
+
+    phFound := not na(ta.pivothigh(rsi, lookbackLeft, lookbackRight))
+    rsiLH = rsiLBR < ta.valuewhen(phFound, rsiLBR, 1) and _inRange(phFound[1])
+    highLBR = high[lookbackRight]
+    priceHH = highLBR > ta.valuewhen(phFound, highLBR, 1)
+    bearCond := priceHH and rsiLH and phFound
+
+plot(plFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish", linewidth=2, color=(bullCond ? bullColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bullCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish Label", text=" Bull ", style=shape.labelup, location=location.absolute, color=bullColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+plot(phFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish", linewidth=2, color=(bearCond ? bearColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bearCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish Label", text=" Bear ", style=shape.labeldown, location=location.absolute, color=bearColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+
+alertcondition(bullCond, title="Regular Bullish Divergence", message="Found a new Regular Bullish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")
+alertcondition(bearCond, title="Regular Bearish Divergence", message="Found a new Regular Bearish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")

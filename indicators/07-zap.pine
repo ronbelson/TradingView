@@ -1,0 +1,370 @@
+// TradingView Pine Script v6
+// Zap - Close Line Color by SMA, MACD, RSI + MA Cross Markers
+// Description: Line turns green when close > MA Short and MACD rising or above signal; red otherwise. RSI > 70 purple; RSI < 30 gray.
+// Author: Ron Belson
+//@version=6
+indicator("Zap", overlay=true, max_bars_back=1000)
+
+// ---- Zap Inputs ----
+crossConfirmBars = input.int(1, "Cross confirmation (bars)", minval=0, maxval=10, group="Zap", tooltip="0=immediate. 1+=signal only when cross holds for N bars.")
+candlesFollow = input.string("Slow", "Candles follow", options=["Slow", "Fast"], group="Zap", tooltip="Which MA pair colors the candles")
+
+// ---- Fast MA (9/21) ----
+showFast = input.bool(false, "Show Fast MA", group="Fast MA")
+maTypeFast = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA", "HMA", "RMA"], group="Fast MA")
+fastShortLen = input.int(9, "Short Length", minval=1, group="Fast MA")
+fastLongLen = input.int(21, "Long Length", minval=1, group="Fast MA")
+showFastFill = input.bool(true, "Fill between Short/Long", group="Fast MA", tooltip="Green=Short above Long, Red=below")
+fastFillTransparency = input.int(80, "Fill transparency %", minval=50, maxval=95, group="Fast MA")
+showFastCrossMarkers = input.bool(false, "Show Cross Markers", group="Fast MA")
+
+// ---- Slow MA (50/200) ----
+showSlow = input.bool(true, "Show Slow MA", group="Slow MA")
+maTypeSlow = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA", "HMA", "RMA"], group="Slow MA")
+slowShortLen = input.int(50, "Short Length", minval=1, group="Slow MA")
+slowLongLen = input.int(200, "Long Length", minval=1, group="Slow MA")
+showSma200 = input.bool(true, "Show MA 200 line", group="Slow MA")
+showSlowFill = input.bool(true, "Fill between Short/Long", group="Slow MA", tooltip="Blue=Short above Long, Orange=below (different from Fast green/red)")
+slowFillTransparency = input.int(80, "Fill transparency %", minval=50, maxval=95, group="Slow MA")
+showSlowCrossMarkers = input.bool(false, "Show Cross Markers", group="Slow MA")
+
+// ---- MA 300 ----
+showMa300 = input.bool(true, "Show MA 300", group="MA 300")
+ma300Len = input.int(300, "Length", minval=1, group="MA 300")
+maType300 = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA", "HMA", "RMA"], group="MA 300")
+
+rsiLen = input.int(14, "RSI Length", minval=1)
+showRsiColors = input.bool(true, "Enable RSI Colors")
+macdFast = input.int(12, "MACD Fast", minval=1)
+macdSlow = input.int(26, "MACD Slow", minval=1)
+macdSignal = input.int(9, "MACD Signal", minval=1)
+
+useChartMacdTf = input.bool(true, "Use Chart MACD Timeframe")
+useStrictChartMacd = input.bool(false, "Use Chart MACD > 0 & > Signal")
+
+// ---- Timeframe Touch-Count Levels (most-touched highs & lows) ----
+showTfLines = input.bool(true, "Show timeframe lines", group="Timeframe Lines")
+useChartTfForLines = input.bool(true, "Use chart timeframe", group="Timeframe Lines", tooltip="On = levels from the chart you see. Off = pick period below.")
+tfLinesPeriod = input.string("Chart", "Period (if not chart)", options=["Chart", "1M", "1W", "3D", "1D", "6H", "4H", "3H", "2H", "1H", "30m", "15m", "10m", "5m", "1m"], group="Timeframe Lines", tooltip="Only used when Use chart timeframe is off.")
+tfLookback = input.int(100, "Lookback (bars)", minval=20, maxval=500, group="Timeframe Lines")
+tfLevelsReturn = input.int(3, "Levels to show (each side)", minval=1, maxval=10, group="Timeframe Lines")
+tfRoundStep = input.float(0.01, "Round step", minval=0.0001, step=0.001, group="Timeframe Lines")
+tfMinTouches = input.int(2, "Min touches", minval=1, maxval=20, group="Timeframe Lines")
+tfFilterByPrice = input.bool(false, "Filter by price (resistance above, support below)", group="Timeframe Lines", tooltip="If false: show top Highs and top Lows regardless of current price")
+
+// ---- SMA Slope Alignment (both SMAs pointing same direction) ----
+showSmaSlopeAlign = input.bool(true, "Show SMA alignment (both up/down)", group="SMA Slope")
+smaSlopeLookback = input.int(5, "Slope lookback (bars)", minval=1, maxval=50, group="SMA Slope", tooltip="Compare SMA now vs N bars ago to determine direction")
+showSmaSlopeBg = input.bool(true, "Background color when aligned", group="SMA Slope")
+showSmaSlopeTable = input.bool(true, "Show alignment in table", group="SMA Slope")
+
+periodToTv(p) =>
+    p == "1M" ? "M" : p == "1W" ? "W" : p == "3D" ? "3D" : p == "1D" ? "D" : p == "6H" ? "360" : p == "4H" ? "240" : p == "3H" ? "180" : p == "2H" ? "120" : p == "1H" ? "60" : p == "30m" ? "30" : p == "15m" ? "15" : p == "10m" ? "10" : p == "5m" ? "5" : p == "1m" ? "1" : timeframe.period
+
+tfLinesResolved = useChartTfForLines or tfLinesPeriod == "Chart" ? timeframe.period : periodToTv(tfLinesPeriod)
+
+// Higher timeframe for MACD based on chart timeframe
+macdTf = timeframe.period
+if not useChartMacdTf and not useStrictChartMacd
+    macdTf := timeframe.isdaily ? "W" : macdTf
+    macdTf := timeframe.isweekly ? "M" : macdTf
+    if timeframe.isminutes
+        macdTf := timeframe.multiplier == 1 ? "5" : macdTf
+        macdTf := timeframe.multiplier == 5 ? "10" : macdTf
+        macdTf := timeframe.multiplier == 30 ? "60" : macdTf
+        macdTf := timeframe.multiplier == 60 ? "240" : macdTf
+        macdTf := timeframe.multiplier == 240 ? "D" : macdTf
+
+// MA by type helper
+f_ma(float src, int len, string t) =>
+    t == "EMA" ? ta.ema(src, len) : t == "WMA" ? ta.wma(src, len) : t == "VWMA" ? ta.vwma(src, len) : t == "HMA" ? ta.hma(src, len) : t == "RMA" ? ta.rma(src, len) : ta.sma(src, len)
+
+// Fast MA (9/21)
+fastShort = f_ma(close, fastShortLen, maTypeFast)
+fastLong = f_ma(close, fastLongLen, maTypeFast)
+
+// Slow MA (50/200)
+smaShort = f_ma(close, slowShortLen, maTypeSlow)
+smaLong = f_ma(close, slowLongLen, maTypeSlow)
+sma200 = f_ma(close, 200, maTypeSlow)
+ma300 = f_ma(close, ma300Len, maType300)
+
+rsiVal = ta.rsi(close, rsiLen)
+
+// Slow MA Slope: Short, Long, 200 - all 3 pointing same direction = strong
+shortRising = smaShort > smaShort[smaSlopeLookback]
+shortFalling = smaShort < smaShort[smaSlopeLookback]
+longRising = smaLong > smaLong[smaSlopeLookback]
+longFalling = smaLong < smaLong[smaSlopeLookback]
+sma200Rising = sma200 > sma200[smaSlopeLookback]
+sma200Falling = sma200 < sma200[smaSlopeLookback]
+countUp = (shortRising ? 1 : 0) + (longRising ? 1 : 0) + (sma200Rising ? 1 : 0)
+all3Up = countUp == 3      // Strong Long
+all3Down = countUp == 0    // Strong Short
+bothUp = shortRising and longRising
+bothDown = shortFalling and longFalling
+
+// Timeframe Touch-Count: cluster highs/lows, count touches, show top N
+var array<float> arrHighs = array.new_float()
+var array<float> arrLows = array.new_float()
+var array<line> tfLinesArr = array.new_line()
+var array<label> tfLabelsArr = array.new_label()
+
+roundTfPrice(_p) =>
+    math.round(_p / tfRoundStep) * tfRoundStep
+
+addTfPrice(_p, _prices, _counts) =>
+    if not na(_p)
+        _r = roundTfPrice(_p)
+        _idx = array.indexof(_prices, _r)
+        if _idx == -1
+            array.push(_prices, _r)
+            array.push(_counts, 1)
+        else
+            array.set(_counts, _idx, array.get(_counts, _idx) + 1)
+
+getTopTfLevelsAndCounts(_prices, _counts, _n, _minTouches, _filterByPrice, _isSupport, _currPrice) =>
+    _levels = array.new_float()
+    _lcounts = array.new_int()
+    _nPrices = array.size(_prices)
+    if _nPrices > 0
+        for i = 0 to _nPrices - 1
+            p = array.get(_prices, i)
+            c = array.get(_counts, i)
+            _passFilter = not _filterByPrice or (_isSupport ? p < _currPrice : p > _currPrice)
+            if c >= _minTouches and _passFilter
+                array.push(_levels, p)
+                array.push(_lcounts, c)
+    _resultLevels = array.new_float()
+    _resultCounts = array.new_int()
+    _sz = array.size(_levels)
+    if _sz > 0
+        for k = 0 to math.min(_n, _sz) - 1
+            maxC = -1
+            maxIdx = -1
+            for j = 0 to array.size(_lcounts) - 1
+                cc = array.get(_lcounts, j)
+                if cc > maxC
+                    maxC := cc
+                    maxIdx := j
+            if maxIdx >= 0
+                array.push(_resultLevels, array.get(_levels, maxIdx))
+                array.push(_resultCounts, array.get(_lcounts, maxIdx))
+                array.set(_lcounts, maxIdx, -1)
+    [_resultLevels, _resultCounts]
+
+[tfHigh, tfLow, tfTime] = request.security(syminfo.tickerid, tfLinesResolved, [high, low, time], barmerge.gaps_off, barmerge.lookahead_off)
+tfNewBar = ta.change(tfTime) != 0
+
+if tfNewBar and not na(tfHigh) and not na(tfLow)
+    array.unshift(arrHighs, tfHigh)
+    array.unshift(arrLows, tfLow)
+    while array.size(arrHighs) > tfLookback
+        array.pop(arrHighs)
+    while array.size(arrLows) > tfLookback
+        array.pop(arrLows)
+
+if showTfLines and barstate.islast and array.size(arrHighs) >= tfMinTouches
+    resPrices = array.new_float()
+    resCounts = array.new_int()
+    supPrices = array.new_float()
+    supCounts = array.new_int()
+    nH = array.size(arrHighs)
+    nL = array.size(arrLows)
+    if nH > 0
+        for i = 0 to nH - 1
+            addTfPrice(array.get(arrHighs, i), resPrices, resCounts)
+    if nL > 0
+        for i = 0 to nL - 1
+            addTfPrice(array.get(arrLows, i), supPrices, supCounts)
+
+    [topRes, topResCnt] = getTopTfLevelsAndCounts(resPrices, resCounts, tfLevelsReturn, tfMinTouches, tfFilterByPrice, false, close)
+    [topSup, topSupCnt] = getTopTfLevelsAndCounts(supPrices, supCounts, tfLevelsReturn, tfMinTouches, tfFilterByPrice, true, close)
+
+    nOldLines = array.size(tfLinesArr)
+    if nOldLines > 0
+        for i = 0 to nOldLines - 1
+            line.delete(array.get(tfLinesArr, i))
+    array.clear(tfLinesArr)
+    nOldLbl = array.size(tfLabelsArr)
+    if nOldLbl > 0
+        for i = 0 to nOldLbl - 1
+            label.delete(array.get(tfLabelsArr, i))
+    array.clear(tfLabelsArr)
+
+    _x = bar_index
+    nRes = array.size(topRes)
+    if nRes > 0
+        for i = 0 to nRes - 1
+            _y = array.get(topRes, i)
+            _cnt = array.get(topResCnt, i)
+            _line = line.new(_x, _y, _x + 1, _y, extend=extend.right, color=color.red, width=2)
+            array.push(tfLinesArr, _line)
+            array.push(tfLabelsArr, label.new(bar_index, _y, str.tostring(_cnt) + " ↑", style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.red, size=size.tiny))
+
+    nSup = array.size(topSup)
+    if nSup > 0
+        for i = 0 to nSup - 1
+            _y = array.get(topSup, i)
+            _cnt = array.get(topSupCnt, i)
+            _line = line.new(_x, _y, _x + 1, _y, extend=extend.right, color=color.green, width=2)
+            array.push(tfLinesArr, _line)
+            array.push(tfLabelsArr, label.new(bar_index, _y, str.tostring(_cnt) + " ↓", style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.green, size=size.tiny))
+else
+    nLines = array.size(tfLinesArr)
+    if nLines > 0
+        for i = 0 to nLines - 1
+            line.delete(array.get(tfLinesArr, i))
+    array.clear(tfLinesArr)
+    nLbl = array.size(tfLabelsArr)
+    if nLbl > 0
+        for i = 0 to nLbl - 1
+            label.delete(array.get(tfLabelsArr, i))
+    array.clear(tfLabelsArr)
+
+f_macdUp() =>
+    [m, s, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+    m > m[1] or m >= s
+
+f_macdStrong() =>
+    [m, s, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+    m > 0 and s > 0 and m > s
+
+macdUp = request.security(syminfo.tickerid, macdTf, f_macdUp())
+macdStrong = request.security(syminfo.tickerid, macdTf, f_macdStrong())
+macdCondition = useStrictChartMacd ? macdStrong : macdUp
+
+// Color logic: each pair gets green when close > short and MACD ok, red otherwise
+baseGreenSlow = close > smaShort and macdCondition
+baseGreenFast = close > fastShort and macdCondition
+lineColorSlow = baseGreenSlow ? color.green : color.red
+lineColorFast = baseGreenFast ? color.green : color.red
+if showRsiColors
+    lineColorSlow := rsiVal > 70 ? color.purple : lineColorSlow
+    lineColorSlow := rsiVal < 30 ? color.gray : lineColorSlow
+    lineColorFast := rsiVal > 70 ? color.purple : lineColorFast
+    lineColorFast := rsiVal < 30 ? color.gray : lineColorFast
+lineColor = candlesFollow == "Fast" ? lineColorFast : lineColorSlow
+
+// Candle display/colors based on line color (same as SMA Short line)
+showPriceCandles = input.bool(true, "Show Price Candles")
+showCandleColors = input.bool(true, "Color Candles Like Line")
+candleColor = lineColor
+barcolor(showPriceCandles and showCandleColors ? candleColor : na)
+plotcandle(
+    showPriceCandles and showCandleColors ? open : na,
+    showPriceCandles ? high : na,
+    showPriceCandles ? low : na,
+    showPriceCandles ? close : na,
+    color=candleColor,
+    wickcolor=candleColor,
+    bordercolor=candleColor
+)
+
+// Simple win/loss stats based on red/green only (ignore purple/gray)
+showStats = input.bool(true, "Show Win/Loss Table")
+startTime = input.time(timestamp("2024-01-01T00:00:00"), "Start Date")
+isGreen = lineColor == color.green
+isRed = lineColor == color.red
+
+var bool inTrade = false
+var float entryPrice = na
+var int wins = 0
+var int losses = 0
+
+if time < startTime
+    inTrade := false
+    entryPrice := na
+else
+    if isGreen and not inTrade
+        inTrade := true
+        entryPrice := close
+    if isRed and inTrade
+        inTrade := false
+        if close > entryPrice
+            wins += 1
+        else
+            losses += 1
+        entryPrice := na
+
+totalTrades = wins + losses
+winRate = totalTrades > 0 ? (wins / totalTrades) * 100.0 : na
+
+// SMA Slope: slope strength as % change over lookback (positive=up, negative=down)
+shortSlopePct = slowShortLen >= smaSlopeLookback ? (smaShort - smaShort[smaSlopeLookback]) / smaShort[smaSlopeLookback] * 100 : 0.0
+longSlopePct = slowLongLen >= smaSlopeLookback ? (smaLong - smaLong[smaSlopeLookback]) / smaLong[smaSlopeLookback] * 100 : 0.0
+sma200SlopePct = (sma200 - sma200[smaSlopeLookback]) / sma200[smaSlopeLookback] * 100
+// Price vs SMAs: how many SMAs is close above (3=above all bullish, 0=below all bearish)
+priceAboveCount = (close > smaShort ? 1 : 0) + (close > smaLong ? 1 : 0) + (close > sma200 ? 1 : 0)
+
+var table statsTable = table.new(position.top_right, 2, 9, border_width=1)
+if showStats
+    table.cell(statsTable, 0, 0, "Wins", text_color=color.white, bgcolor=color.new(color.green, 60))
+    table.cell(statsTable, 1, 0, str.tostring(wins))
+    table.cell(statsTable, 0, 1, "Losses", text_color=color.white, bgcolor=color.new(color.red, 60))
+    table.cell(statsTable, 1, 1, str.tostring(losses))
+    table.cell(statsTable, 0, 2, "Total", text_color=color.white, bgcolor=color.new(color.gray, 60))
+    table.cell(statsTable, 1, 2, str.tostring(totalTrades))
+    table.cell(statsTable, 0, 3, "Win %", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(statsTable, 1, 3, na(winRate) ? "n/a" : str.tostring(winRate, "#.##") + "%")
+if showSmaSlopeTable and showSmaSlopeAlign
+    alignText = all3Up ? "3↑ Strong Long" : all3Down ? "3↓ Strong Short" : countUp == 2 ? "2↑ 1↓" : countUp == 1 ? "1↑ 2↓" : "↔ Mixed"
+    alignBg = all3Up ? color.new(color.green, 40) : all3Down ? color.new(color.red, 40) : countUp == 2 ? color.new(color.green, 70) : countUp == 1 ? color.new(color.red, 70) : color.new(color.gray, 60)
+    table.cell(statsTable, 0, 4, "3-MA Align", text_color=color.white, bgcolor=color.new(color.gray, 40))
+    table.cell(statsTable, 1, 4, alignText, text_color=color.white, bgcolor=alignBg)
+    table.cell(statsTable, 0, 5, "Slope %", text_color=color.white, bgcolor=color.new(color.gray, 40))
+    table.cell(statsTable, 1, 5, str.tostring(shortSlopePct, "#.##") + " / " + str.tostring(longSlopePct, "#.##") + " / " + str.tostring(sma200SlopePct, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 60))
+    table.cell(statsTable, 0, 6, "Price>SMAs", text_color=color.white, bgcolor=color.new(color.gray, 40))
+    priceVsText = priceAboveCount == 3 ? "3/3 ↑" : priceAboveCount == 2 ? "2/3" : priceAboveCount == 1 ? "1/3" : "0/3 ↓"
+    priceVsBg = priceAboveCount == 3 ? color.new(color.green, 70) : priceAboveCount == 0 ? color.new(color.red, 70) : color.new(color.gray, 60)
+    table.cell(statsTable, 1, 6, priceVsText, text_color=color.white, bgcolor=priceVsBg)
+
+// Fast MA cross
+crossFastUp = ta.crossover(fastShort, fastLong)
+crossFastDown = ta.crossunder(fastShort, fastLong)
+confirmedFastUp = crossFastUp
+confirmedFastDown = crossFastDown
+if crossConfirmBars > 0
+    _heldFastUp = true
+    _heldFastDown = true
+    for i = 0 to crossConfirmBars
+        _heldFastUp := _heldFastUp and fastShort[i] > fastLong[i]
+        _heldFastDown := _heldFastDown and fastShort[i] < fastLong[i]
+    confirmedFastUp := crossFastUp[crossConfirmBars] and _heldFastUp
+    confirmedFastDown := crossFastDown[crossConfirmBars] and _heldFastDown
+arrowFast = showFastCrossMarkers and (confirmedFastUp or confirmedFastDown) ? (confirmedFastUp ? 1 : -1) : na
+
+// Slow MA cross
+crossShortAboveLong = ta.crossover(smaShort, smaLong)
+crossShortBelowLong = ta.crossunder(smaShort, smaLong)
+confirmedUp = crossShortAboveLong
+confirmedDown = crossShortBelowLong
+if crossConfirmBars > 0
+    _heldUp = true
+    _heldDown = true
+    for i = 0 to crossConfirmBars
+        _heldUp := _heldUp and smaShort[i] > smaLong[i]
+        _heldDown := _heldDown and smaShort[i] < smaLong[i]
+    confirmedUp := crossShortAboveLong[crossConfirmBars] and _heldUp
+    confirmedDown := crossShortBelowLong[crossConfirmBars] and _heldDown
+arrowSlow = showSlowCrossMarkers and (confirmedUp or confirmedDown) ? (confirmedUp ? 1 : -1) : na
+
+plotarrow(arrowFast, "Fast Cross", colorup=color.green, colordown=color.red)
+plotarrow(arrowSlow, "Slow Cross", colorup=color.lime, colordown=color.orange)
+
+// SMA Slope: background when all 3 aligned
+bgcolor(showSmaSlopeAlign and showSmaSlopeBg ? (all3Up ? color.new(color.green, 92) : all3Down ? color.new(color.red, 92) : na) : na)
+
+// Fast MA: plots + fill
+fastFillColor = fastShort > fastLong ? color.new(color.green, fastFillTransparency) : color.new(color.red, fastFillTransparency)
+pFastShort = plot(showFast ? fastShort : na, "Fast Short", color=lineColorFast, linewidth=2)
+pFastLong = plot(showFast ? fastLong : na, "Fast Long", color=color.new(color.orange, 40), linewidth=1)
+fill(pFastShort, pFastLong, color=showFast and showFastFill ? fastFillColor : color.new(color.gray, 100))
+
+// Slow MA: plots + fill (blue/orange to distinguish from Fast green/red)
+slowFillColor = smaShort > smaLong ? color.new(color.blue, slowFillTransparency) : color.new(color.orange, slowFillTransparency)
+pSlowShort = plot(showSlow ? smaShort : na, "Slow Short", color=lineColorSlow, linewidth=2)
+pSlowLong = plot(showSlow ? smaLong : na, "Slow Long", color=color.new(color.blue, 40), linewidth=1)
+fill(pSlowShort, pSlowLong, color=showSlow and showSlowFill ? slowFillColor : color.new(color.gray, 100))
+plot(showSlow and showSma200 ? sma200 : na, "MA 200", color=color.blue, linewidth=1)
+plot(showMa300 ? ma300 : na, "MA 300", color=color.orange, linewidth=2)

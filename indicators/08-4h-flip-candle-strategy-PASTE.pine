@@ -1,0 +1,264 @@
+//@version=6
+strategy(
+     title="4H Flip Candle Entry (Edge)",
+     shorttitle="4H Flip",
+     overlay=true,
+     initial_capital=20000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.04,
+     pyramiding=0,
+     process_orders_on_close=true,
+     calc_on_every_tick=true,
+     margin_long=0,
+     margin_short=0
+ )
+
+// Put on BTCUSDT · 1m (live) or any TF.
+// Entry: 4H bubble + first flip candle (same as before).
+// Stop: prior 4H opposite candle extreme.
+// Exit / trail: 4H exhaustion SCORE (not bubble end).
+//   Short → watch BOTTOM score (dump exhaustion).
+//   Long  → watch TOP score (rally exhaustion).
+//   Arm when score >= armThr · exit when score drops dropPts from peak.
+// No Funding / OI / CVD in Pine (later via hook/server).
+
+gTrade = "Trade"
+allowShort = input.bool(true, "Allow short", group=gTrade)
+allowLong = input.bool(true, "Allow long", group=gTrade)
+useLiveBreach = input.bool(true, "Enter if wick breaches prior open", group=gTrade)
+oneTradeAtATime = input.bool(true, "Flat only (no add)", group=gTrade)
+
+gBub = "4H bubble (same defaults as meter)"
+bubRsiLen = input.int(4, "Bubble RSI len", minval=1, group=gBub)
+bubOB = input.int(70, "Overbought", minval=51, maxval=100, group=gBub)
+bubOS = input.int(30, "Oversold", minval=1, maxval=49, group=gBub)
+
+gScore = "Exhaustion score (4H)"
+armThr = input.int(70, "Arm exit when score ≥", minval=40, maxval=100, group=gScore)
+dropPts = input.int(15, "Exit when score drops from peak by", minval=5, maxval=50, group=gScore)
+wDiv = input.int(30, "Weight · RSI divergence", minval=0, maxval=50, group=gScore)
+wVol = input.int(20, "Weight · volume climax", minval=0, maxval=50, group=gScore)
+wAtr = input.int(15, "Weight · ATR extension", minval=0, maxval=50, group=gScore)
+wAdx = input.int(15, "Weight · ADX rolling over", minval=0, maxval=50, group=gScore)
+wStruct = input.int(20, "Weight · structure fail", minval=0, maxval=50, group=gScore)
+atrMult = input.float(2.5, "ATR extension × ATR", minval=1.0, maxval=5.0, step=0.1, group=gScore)
+volMult = input.float(2.0, "Volume climax × SMA", minval=1.2, maxval=5.0, step=0.1, group=gScore)
+adxHi = input.float(40.0, "ADX was above", minval=20, maxval=60, group=gScore)
+pivotL = input.int(3, "Divergence pivot left", minval=2, maxval=8, group=gScore)
+pivotR = input.int(3, "Divergence pivot right", minval=2, maxval=8, group=gScore)
+
+// ── 4H bubble ──
+f_h4Bubble() =>
+    float r = ta.rsi(close, bubRsiLen)
+    bool isOb = r >= bubOB
+    bool isOs = r <= bubOS
+    var int laststate = 0
+    var float hh = low
+    var float ll = high
+    var float last_hh_price = 0.0
+    var float last_ll_price = 0.0
+    var string lastBubble = ""
+    if laststate == 2 and isOb
+        hh := high
+        lastBubble := last_hh_price < high ? "HH" : "LH"
+        last_ll_price := ll
+        laststate := 1
+    if laststate == 1 and isOs
+        ll := low
+        lastBubble := last_ll_price < low ? "HL" : "LL"
+        last_hh_price := hh
+        laststate := 2
+    if isOb
+        if high >= hh
+            hh := high
+            lastBubble := last_hh_price < high ? "HH" : "LH"
+        laststate := 1
+    if isOs
+        if low <= ll
+            ll := low
+            lastBubble := last_ll_price < low ? "HL" : "LL"
+        laststate := 2
+    if laststate == 1 and high >= hh
+        hh := high
+        lastBubble := last_hh_price < high ? "HH" : "LH"
+    if laststate == 2 and low <= ll
+        ll := low
+        lastBubble := last_ll_price < low ? "HL" : "LL"
+    bool upper = lastBubble == "HH" or lastBubble == "LH"
+    bool lower = lastBubble == "LL" or lastBubble == "HL"
+    [lastBubble, upper, lower, r]
+
+// ── 4H exhaustion scores (top = rally tire · bottom = dump tire) ──
+f_h4Scores() =>
+    float rsi14 = ta.rsi(close, 14)
+    float ema20 = ta.ema(close, 20)
+    float atr = ta.atr(14)
+    float volSma = ta.sma(volume, 20)
+    [_plusDI, _minusDI, adx] = ta.dmi(14, 14)
+
+    float pH = ta.pivothigh(high, pivotL, pivotR)
+    float pL = ta.pivotlow(low, pivotL, pivotR)
+    float rH = ta.pivothigh(rsi14, pivotL, pivotR)
+    float rL = ta.pivotlow(rsi14, pivotL, pivotR)
+    var float lastPh = na
+    var float prevPh = na
+    var float lastPl = na
+    var float prevPl = na
+    var float lastRh = na
+    var float prevRh = na
+    var float lastRl = na
+    var float prevRl = na
+    if not na(pH)
+        prevPh := lastPh
+        lastPh := pH
+    if not na(pL)
+        prevPl := lastPl
+        lastPl := pL
+    if not na(rH)
+        prevRh := lastRh
+        lastRh := rH
+    if not na(rL)
+        prevRl := lastRl
+        lastRl := rL
+    bool bearDiv = not na(prevPh) and not na(lastPh) and lastPh > prevPh and not na(prevRh) and not na(lastRh) and lastRh < prevRh
+    bool bullDiv = not na(prevPl) and not na(lastPl) and lastPl < prevPl and not na(prevRl) and not na(lastRl) and lastRl > prevRl
+
+    float range = high - low
+    float upperWick = high - math.max(open, close)
+    float lowerWick = math.min(open, close) - low
+    float body = math.abs(close - open)
+    bool volSpike = volSma > 0 and volume > volSma * volMult
+    bool topClimax = volSpike and range > 0 and upperWick > body * 1.2 and upperWick > range * 0.4
+    bool botClimax = volSpike and range > 0 and lowerWick > body * 1.2 and lowerWick > range * 0.4
+
+    bool atrTop = close > ema20 + atrMult * atr
+    bool atrBot = close < ema20 - atrMult * atr
+
+    float adxPeak = ta.highest(adx, 10)
+    bool adxRolling = adxPeak >= adxHi and adx < adxPeak and adx < adx[1]
+
+    bool recentHH = high[1] >= ta.highest(high[2], 12)
+    bool structTopFail = recentHH and close < low[1]
+    bool recentLL = low[1] <= ta.lowest(low[2], 12)
+    bool structBotFail = recentLL and close > high[1]
+
+    int top = 0
+    int bot = 0
+    if bearDiv
+        top += wDiv
+    if bullDiv
+        bot += wDiv
+    if topClimax
+        top += wVol
+    if botClimax
+        bot += wVol
+    if atrTop
+        top += wAtr
+    if atrBot
+        bot += wAtr
+    if adxRolling and close > ema20
+        top += wAdx
+    if adxRolling and close < ema20
+        bot += wAdx
+    if structTopFail
+        top += wStruct
+    if structBotFail
+        bot += wStruct
+    [top, bot, bearDiv, bullDiv, topClimax, botClimax, atrTop, atrBot, adxRolling, structTopFail, structBotFail]
+
+f_h4Ohlc() =>
+    [open, high, low, close, open[1], high[1], low[1], close[1]]
+
+[h4Bubble, upperBubble, lowerBubble, h4BubRsi] = request.security(syminfo.tickerid, "240", f_h4Bubble(), barmerge.gaps_off, barmerge.lookahead_off)
+[topScore, botScore, bearDiv, bullDiv, topClimax, botClimax, atrTop, atrBot, adxRolling, structTopFail, structBotFail] = request.security(syminfo.tickerid, "240", f_h4Scores(), barmerge.gaps_off, barmerge.lookahead_off)
+[h4Open, h4High, h4Low, h4Close, h4Open1, h4High1, h4Low1, h4Close1] = request.security(syminfo.tickerid, "240", f_h4Ohlc(), barmerge.gaps_off, barmerge.lookahead_off)
+
+isGreen = h4Close > h4Open
+isRed = h4Close < h4Open
+prevGreen = h4Close1 > h4Open1
+prevRed = h4Close1 < h4Open1
+firstRedAfterGreen = isRed and prevGreen
+firstGreenAfterRed = isGreen and prevRed
+
+shortBreach = useLiveBreach and firstRedAfterGreen and h4Low < h4Open1
+shortRaw = allowShort and upperBubble and firstRedAfterGreen and (isRed or shortBreach)
+shortSignal = shortRaw and not shortRaw[1]
+shortStop = h4High1
+
+longBreach = useLiveBreach and firstGreenAfterRed and h4High > h4Open1
+longRaw = allowLong and lowerBubble and firstGreenAfterRed and (isGreen or longBreach)
+longSignal = longRaw and not longRaw[1]
+longStop = h4Low1
+
+flat = strategy.position_size == 0
+canEnter = not oneTradeAtATime or flat
+
+var float activeStop = na
+var float peakExitScore = 0.0
+var bool scoreArmed = false
+
+if canEnter and shortSignal and not na(shortStop)
+    strategy.entry("Short", strategy.short)
+    activeStop := shortStop
+    peakExitScore := 0.0
+    scoreArmed := false
+
+if canEnter and longSignal and not na(longStop)
+    strategy.entry("Long", strategy.long)
+    activeStop := longStop
+    peakExitScore := 0.0
+    scoreArmed := false
+
+inShort = strategy.position_size < 0
+inLong = strategy.position_size > 0
+
+// Short watches BOTTOM exhaustion (dump tire) · Long watches TOP.
+exitScore = inShort ? botScore : inLong ? topScore : 0
+
+if inShort or inLong
+    peakExitScore := math.max(peakExitScore, exitScore)
+    if peakExitScore >= armThr
+        scoreArmed := true
+
+scoreFadeExit = (inShort or inLong) and scoreArmed and exitScore <= peakExitScore - dropPts
+shortExitSig = inShort and scoreFadeExit
+longExitSig = inLong and scoreFadeExit
+
+if inShort
+    strategy.exit("Short XP", from_entry="Short", stop=activeStop)
+    if shortExitSig
+        strategy.close("Short", comment="score fade")
+        scoreArmed := false
+        peakExitScore := 0.0
+
+if inLong
+    strategy.exit("Long XP", from_entry="Long", stop=activeStop)
+    if longExitSig
+        strategy.close("Long", comment="score fade")
+        scoreArmed := false
+        peakExitScore := 0.0
+
+if flat
+    scoreArmed := false
+    peakExitScore := 0.0
+
+plotshape(shortSignal, title="Short signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny)
+plotshape(longSignal, title="Long signal", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny)
+plotshape(shortExitSig, title="Short exit", style=shape.xcross, location=location.abovebar, color=color.orange, size=size.tiny)
+plotshape(longExitSig, title="Long exit", style=shape.xcross, location=location.belowbar, color=color.orange, size=size.tiny)
+plot(inShort or inLong ? activeStop : na, title="Active stop", color=color.gray, style=plot.style_linebr, linewidth=1)
+bgcolor(upperBubble ? color.new(color.red, 94) : lowerBubble ? color.new(color.green, 94) : na, title="4H bubble zone")
+bgcolor(topScore >= armThr ? color.new(color.maroon, 92) : botScore >= armThr ? color.new(color.teal, 92) : na, title="Exhaustion armed zone")
+
+var table hud = table.new(position.top_right, 1, 7, bgcolor=color.new(color.black, 70))
+if barstate.islast
+    table.cell(hud, 0, 0, "4H bub " + h4Bubble, text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 1, "TOP " + str.tostring(topScore) + " / BOT " + str.tostring(botScore), text_color=topScore >= botScore ? color.red : color.lime, text_size=size.small)
+    table.cell(hud, 0, 2, "exitScore " + str.tostring(exitScore) + (scoreArmed ? " ARMED" : ""), text_color=scoreArmed ? color.orange : color.silver, text_size=size.small)
+    table.cell(hud, 0, 3, "peak " + str.tostring(peakExitScore) + " drop>" + str.tostring(dropPts), text_color=color.silver, text_size=size.small)
+    string bits = (bearDiv ? "bDiv " : "") + (bullDiv ? "uDiv " : "") + (topClimax ? "tVol " : "") + (botClimax ? "bVol " : "") + (atrTop ? "atrT " : "") + (atrBot ? "atrB " : "") + (adxRolling ? "adx " : "") + (structTopFail ? "sTop " : "") + (structBotFail ? "sBot " : "")
+    table.cell(hud, 0, 4, bits == "" ? "flags none" : bits, text_color=color.silver, text_size=size.tiny)
+    table.cell(hud, 0, 5, isRed ? "4H red" : isGreen ? "4H green" : "4H doji", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 0, 6, timeframe.period == "1" ? "chart 1m OK" : "prefer 1m chart", text_color=timeframe.period == "1" ? color.lime : color.orange, text_size=size.small)

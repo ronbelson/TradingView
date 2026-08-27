@@ -1,0 +1,16 @@
+//@version=6
+indicator(title="SMA 14 / 72", shorttitle="SMA 14/72", overlay=true, timeframe="", timeframe_gaps=true)
+
+src = input.source(close, "Source")
+lenFast = input.int(14, "Fast SMA", minval=1)
+lenSlow = input.int(72, "Slow SMA", minval=1)
+lineW = input.int(2, "Line width", minval=1, maxval=4)
+
+colFast = input.color(color.new(#FFD54F, 0), "Fast color")
+colSlow = input.color(color.new(#FFD54F, 35), "Slow color")
+
+smaFast = ta.sma(src, lenFast)
+smaSlow = ta.sma(src, lenSlow)
+
+plot(smaFast, "SMA 14", color=colFast, linewidth=lineW)
+plot(smaSlow, "SMA 72", color=colSlow, linewidth=lineW)

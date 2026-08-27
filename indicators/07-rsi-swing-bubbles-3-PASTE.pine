@@ -1,0 +1,267 @@
+// TradingView Pine Script v6
+// Bubble 3 — clean single RSI swing engine, length 3
+// Label anchor: same as BTC Stack Meter engine 3 (bar_time + opp bar cache)
+// Swing logic: © BalintDavid (Mozilla Public License 2.0) via Trading Line Entry
+// Author: Ron Belson
+//@version=6
+indicator("Bubble 3", overlay=true, max_bars_back=5000, max_labels_count=200)
+
+rsiSource = input.source(close, "RSI Source", group="RSI Swing")
+rsiLength = input.int(3, "RSI Length", minval=1, group="RSI Swing")
+rsiOverbought = input.int(70, "RSI Overbought", minval=51, maxval=100, group="RSI Swing")
+rsiOversold = input.int(30, "RSI Oversold", minval=1, maxval=49, group="RSI Swing")
+showBubbles = input.bool(true, "Show bubbles", group="RSI Swing")
+limitBubbleCount = input.bool(true, "Limit bubble count", group="RSI Swing", tooltip="Off = keep all bubbles on chart.")
+maxRecentBubbles = input.int(4, "Show last N bubbles", minval=1, maxval=100, group="RSI Swing", tooltip="Used when Limit bubble count is on. Older labels are removed.")
+
+labelSizeOpt = input.string("Tiny", "Label size", options=["Tiny", "Small", "Normal", "Large"], group="Label")
+showTimeElapsed = input.bool(true, "Show elapsed time", group="Label")
+showProfit = input.bool(true, "Show profit", group="Label")
+showTimeZones = input.bool(true, "Show NY + IL clock", group="Label")
+capitalAmount = input.float(20000, "Capital for profit $", minval=1, group="Label")
+
+enableHHAlert = input.bool(true, "Alert on HH", group="Alerts")
+enableLHAlert = input.bool(true, "Alert on LH", group="Alerts")
+enableHLAlert = input.bool(true, "Alert on HL", group="Alerts")
+enableLLAlert = input.bool(true, "Alert on LL", group="Alerts")
+
+rsiValue = ta.rsi(rsiSource, rsiLength)
+isOverbought = rsiValue >= rsiOverbought
+isOversold = rsiValue <= rsiOversold
+
+var int laststate = 0
+var float hh = low
+var float ll = high
+var float last_actual_label_hh_price = 0.0
+var float last_actual_label_ll_price = 0.0
+var label labelhh = na
+var label labelll = na
+var int oppHhBar = na
+var float oppHhPrice = na
+var int oppLlBar = na
+var float oppLlPrice = na
+var string labelhhBaseText = ""
+var string labelllBaseText = ""
+var array<label> bubbleHistory = array.new<label>()
+
+var bool alertHH = false
+var bool alertLH = false
+var bool alertHL = false
+var bool alertLL = false
+alertHH := false
+alertLH := false
+alertHL := false
+alertLL := false
+
+obCode() => last_actual_label_hh_price < high ? "HH" : "LH"
+osCode() => last_actual_label_ll_price < low ? "HL" : "LL"
+
+getLabelSize() =>
+    switch labelSizeOpt
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        => size.tiny
+
+labelColors(code) =>
+    if code == "HH"
+        [color.new(#FF6D00, 0), color.black]
+    else if code == "LH"
+        [color.new(#FFAB40, 0), color.black]
+    else if code == "LL"
+        [color.new(#AA00FF, 0), color.white]
+    else
+        [color.new(#E040FB, 0), color.black]
+
+formatElapsedTime(ms) =>
+    if na(ms) or ms < 0
+        ""
+    else if ms < 60000
+        str.tostring(math.floor(ms / 1000), "#") + " sec"
+    else if ms < 3600000
+        str.tostring(math.floor(ms / 60000), "#") + " min"
+    else if ms < 86400000
+        hrs = math.floor(ms / 3600000)
+        mins = math.floor((ms % 3600000) / 60000)
+        mins > 0 ? str.tostring(hrs, "#") + "h " + str.tostring(mins, "#") + "m" : str.tostring(hrs, "#") + " hrs"
+    else
+        days = math.floor(ms / 86400000)
+        hrs = math.floor((ms % 86400000) / 3600000)
+        hrs > 0 ? str.tostring(days, "#") + "d " + str.tostring(hrs, "#") + "h" : str.tostring(days, "#") + " days"
+
+clockStr() =>
+    showTimeZones ? ("NY " + str.format_time(time, "HH:mm", "America/New_York") + " | IL " + str.format_time(time, "HH:mm", "Asia/Jerusalem")) : ""
+
+formatLabelText(code, price, elapsedMs, profitUsd, profitPct) =>
+    t = code + "\n" + str.tostring(price, format.mintick)
+    if showTimeZones
+        t += "\n" + clockStr()
+    if showTimeElapsed and not na(elapsedMs) and elapsedMs >= 0
+        t += "\n" + formatElapsedTime(elapsedMs)
+    if showProfit and not na(profitPct)
+        t += "\n" + (profitPct >= 0 ? "+" : "") + str.tostring(profitPct, "#.#") + "%"
+        if not na(profitUsd)
+            t += "  $" + str.tostring(profitUsd, "#.##")
+    t
+
+calcMetrics(isHigh, oppositeTime, oppositePrice) =>
+    elapsedMs = not na(oppositeTime) ? time - oppositeTime : float(na)
+    profitPct = not na(oppositePrice) and oppositePrice != 0 ? (isHigh ? (high - oppositePrice) / oppositePrice * 100.0 : (oppositePrice - low) / oppositePrice * 100.0) : float(na)
+    profitUsd = not na(profitPct) ? profitPct / 100.0 * capitalAmount : float(na)
+    [elapsedMs, profitUsd, profitPct]
+
+makeHigh(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcMetrics(true, oppLlBar, oppLlPrice)
+    txt = formatLabelText(code, high, elapsedMs, profitUsd, profitPct)
+    [fc, tc] = labelColors(code)
+    label.new(time, na, txt, xloc=xloc.bar_time, yloc=yloc.abovebar, style=label.style_label_down, color=fc, textcolor=tc, size=getLabelSize())
+
+makeLow(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcMetrics(false, oppHhBar, oppHhPrice)
+    txt = formatLabelText(code, low, elapsedMs, profitUsd, profitPct)
+    [fc, tc] = labelColors(code)
+    label.new(time, na, txt, xloc=xloc.bar_time, yloc=yloc.belowbar, style=label.style_label_up, color=fc, textcolor=tc, size=getLabelSize())
+
+moveHigh(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcMetrics(true, oppLlBar, oppLlPrice)
+    txt = formatLabelText(code, high, elapsedMs, profitUsd, profitPct)
+    [fc, tc] = labelColors(code)
+    if not na(labelhh)
+        label.set_x(labelhh, time)
+        label.set_y(labelhh, high)
+        label.set_text(labelhh, txt)
+        label.set_color(labelhh, fc)
+        label.set_textcolor(labelhh, tc)
+    txt
+
+moveLow(code) =>
+    [elapsedMs, profitUsd, profitPct] = calcMetrics(false, oppHhBar, oppHhPrice)
+    txt = formatLabelText(code, low, elapsedMs, profitUsd, profitPct)
+    [fc, tc] = labelColors(code)
+    if not na(labelll)
+        label.set_x(labelll, time)
+        label.set_y(labelll, low)
+        label.set_text(labelll, txt)
+        label.set_color(labelll, fc)
+        label.set_textcolor(labelll, tc)
+    txt
+
+trackBubble(lb) =>
+    label clearedH = na
+    label clearedL = na
+    if not na(lb)
+        array.push(bubbleHistory, lb)
+        while limitBubbleCount and array.size(bubbleHistory) > maxRecentBubbles
+            old = array.shift(bubbleHistory)
+            if not na(old)
+                if old == labelhh
+                    clearedH := old
+                if old == labelll
+                    clearedL := old
+                label.delete(old)
+    [clearedH, clearedL]
+
+if laststate == 2 and isOverbought
+    hh := high
+    code = obCode()
+    if code == "HH"
+        alertHH := true
+    else
+        alertLH := true
+    last_actual_label_ll_price := not na(labelll) ? label.get_y(labelll) : ll
+    oppLlBar := not na(labelll) ? label.get_x(labelll) : na
+    oppLlPrice := not na(labelll) ? label.get_y(labelll) : na
+    if showBubbles
+        labelhh := makeHigh(code)
+        [trimH, trimL] = trackBubble(labelhh)
+        if not na(trimH)
+            labelhh := na
+        if not na(trimL)
+            labelll := na
+        labelhhBaseText := not na(labelhh) ? label.get_text(labelhh) : ""
+    laststate := 1
+
+if laststate == 1 and isOversold
+    ll := low
+    code = osCode()
+    if code == "LL"
+        alertLL := true
+    else
+        alertHL := true
+    last_actual_label_hh_price := not na(labelhh) ? label.get_y(labelhh) : hh
+    oppHhBar := not na(labelhh) ? label.get_x(labelhh) : na
+    oppHhPrice := not na(labelhh) ? label.get_y(labelhh) : na
+    if showBubbles
+        labelll := makeLow(code)
+        [trimH, trimL] = trackBubble(labelll)
+        if not na(trimH)
+            labelhh := na
+        if not na(trimL)
+            labelll := na
+        labelllBaseText := not na(labelll) ? label.get_text(labelll) : ""
+    laststate := 2
+
+if isOverbought
+    if high >= hh
+        hh := high
+        code = obCode()
+        if code == "HH"
+            alertHH := true
+        else
+            alertLH := true
+        if showBubbles and not na(labelhh)
+            labelhhBaseText := moveHigh(code)
+        else if showBubbles and na(labelhh)
+            labelhh := makeHigh(code)
+            [trimH, trimL] = trackBubble(labelhh)
+            if not na(trimH)
+                labelhh := na
+            if not na(trimL)
+                labelll := na
+            labelhhBaseText := not na(labelhh) ? label.get_text(labelhh) : ""
+    laststate := 1
+
+if isOversold
+    if low <= ll
+        ll := low
+        code = osCode()
+        if code == "LL"
+            alertLL := true
+        else
+            alertHL := true
+        if showBubbles and not na(labelll)
+            labelllBaseText := moveLow(code)
+        else if showBubbles and na(labelll)
+            labelll := makeLow(code)
+            [trimH, trimL] = trackBubble(labelll)
+            if not na(trimH)
+                labelhh := na
+            if not na(trimL)
+                labelll := na
+            labelllBaseText := not na(labelll) ? label.get_text(labelll) : ""
+    laststate := 2
+
+if laststate == 1 and high >= hh
+    hh := high
+    code = obCode()
+    if code == "HH"
+        alertHH := true
+    else
+        alertLH := true
+    if showBubbles and not na(labelhh)
+        labelhhBaseText := moveHigh(code)
+
+if laststate == 2 and low <= ll
+    ll := low
+    code = osCode()
+    if code == "LL"
+        alertLL := true
+    else
+        alertHL := true
+    if showBubbles and not na(labelll)
+        labelllBaseText := moveLow(code)
+
+alertcondition(enableHHAlert and alertHH, "HH", "Higher High detected!")
+alertcondition(enableLHAlert and alertLH, "LH", "Lower High detected!")
+alertcondition(enableHLAlert and alertHL, "HL", "Higher Low detected!")
+alertcondition(enableLLAlert and alertLL, "LL", "Lower Low detected!")

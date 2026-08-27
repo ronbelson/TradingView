@@ -1,0 +1,22 @@
+[Unit]
+Description=BTC CHEF MBT quote bridge (read-only TWS → Vercel)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/chef-bridge/tws-bridge
+Environment=IB_HOST=127.0.0.1
+Environment=IB_PORT=4001
+Environment=IB_CLIENT_ID=8801
+Environment=CHEF_SECRET_FILE=/opt/chef-bridge/WEBHOOK_URL.txt
+Environment=CHEF_QUOTE_URL=https://tv-stack-listener.vercel.app/api/tws/quote
+Environment=MBT_LOCAL_SYMBOL=MBTQ6
+ExecStart=/usr/bin/bash /opt/chef-bridge/tws-bridge/mbt-quote-bridge-watch.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/chef-bridge/tws-bridge/logs/mbt-quote-bridge-watch.log
+StandardError=append:/opt/chef-bridge/tws-bridge/logs/mbt-quote-bridge-watch.log
+
+[Install]
+WantedBy=multi-user.target

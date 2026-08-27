@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC CHEF</title>
+  <style>
+    :root { --bg:#0b0f14; --card:#121820; --text:#e8eef5; --muted:#8b97a8; --green:#3ecf8e; --red:#ff6b6b; --yellow:#f0c14b; --line:#243041; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.45; padding:20px 16px 48px; }
+    .wrap { max-width:420px; margin:0 auto; }
+    h1 { font-size:18px; margin:0 0 4px; }
+    .sub { color:var(--muted); font-size:13px; margin-bottom:16px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+    .label { color:var(--muted); font-size:12px; margin-bottom:6px; }
+    .big { font-size:28px; font-weight:800; }
+    .row { display:flex; gap:8px; }
+    .row > * { flex:1; }
+    .pill { border-radius:10px; padding:10px; text-align:center; font-weight:700; font-size:14px; }
+    .pill.up { background:#163528; color:var(--green); }
+    .pill.down { background:#3a1d1d; color:var(--red); }
+    .odds-row {
+      display: grid;
+      grid-template-columns: 72px 1fr 48px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 14px;
+    }
+    .odds-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #1a222d;
+      overflow: hidden;
+      direction: ltr;
+    }
+    .odds-fill { display: block; height: 100%; border-radius: 999px; }
+    .odds-fill.u { background: var(--green); }
+    .odds-fill.d { background: var(--red); }
+    .odds-fill.c { background: var(--yellow); }
+    .pcts { display:none; }
+    .tf { display:grid; grid-template-columns:72px 1fr 56px; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+    .tf:last-child { border-bottom:0; }
+    .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-left:6px; }
+    .lvl { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed #1e2834; font-size:14px; }
+    .now { background:#243018; border:1px solid #3d4f22; border-radius:10px; padding:10px 12px; margin:8px 0; font-weight:800; color:var(--yellow); }
+    .muted { color:var(--muted); font-size:13px; }
+    .decision { font-size:22px; font-weight:800; margin:4px 0 8px; }
+    .nums { font-variant-numeric: tabular-nums; }
+    .good { color:var(--green); font-weight:700; }
+    .bad { color:var(--red); font-weight:700; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>BTC CHEF</h1>
+    <div class="sub">תצוגה חיה מהסיפור · ניסוי 4</div>
+    <div class="card"><div class="label">מחיר עכשיו</div><div class="big nums">64,671</div></div>
+    <div class="card"><div class="label">מה קורה עכשיו</div><div>המחיר בנקודת התנגדות, 30m ו-15m ירוקים אבל ה-Week עדיין בירידה חזקה.</div></div>
+    <div class="card">
+      <div class="label">האם זאת כניסה</div>
+      <div class="decision" style="color:#f0c14b">חכה לאישור</div>
+      <div class="muted">ה-30m ו-15m מראים כוח קנייה (GREEN, HH בבועה), אבל ה-2H, Day, 3D ו-Week עדיין בערוץ ירידה. צריך לראות אם המחיר יישאר מעל 64,599 ללא שבירה.</div>
+    </div>
+    
+    <div class="card">
+      <div class="label">מה יותר סביר מכאן</div>
+      <div class="odds-row"><span>עלייה</span><div class="odds-track"><span class="odds-fill u" style="width:58%"></span></div><span class="nums">58%</span></div>
+      <div class="odds-row"><span>ירידה</span><div class="odds-track"><span class="odds-fill d" style="width:28%"></span></div><span class="nums">28%</span></div>
+      <div class="odds-row"><span>המתנה</span><div class="odds-track"><span class="odds-fill c" style="width:14%"></span></div><span class="nums">14%</span></div>
+    </div>
+    <div class="card"><div class="label">הבדל בין הזמנים</div><div class='tf'><span>שבוע</span><span>ירידה חזקה, LL בבועה</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+<div class='tf'><span>3 ימים</span><span>ירידה, LL בבועה</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+<div class='tf'><span>יום</span><span>ערוץ ירידה, LH בבועה</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+<div class='tf'><span>4 שעות</span><span>ערוץ אמצע, HL בבועה</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+<div class='tf'><span>2 שעות</span><span>ערוץ ירידה, mixed</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+<div class='tf'><span>שעה</span><span>LH, mAbove=true</span><span><i class='dot' style='background:#3ecf8e'></i>ירוק</span></div>
+<div class='tf'><span>30 דקות</span><span>HH בבועה, ערוץ עלייה</span><span><i class='dot' style='background:#3ecf8e'></i>ירוק</span></div>
+<div class='tf'><span>15 דקות</span><span>HH בבועה, ערוץ עלייה</span><span><i class='dot' style='background:#ff6b6b'></i>אדום</span></div>
+</div>
+    <div class="card"><div class="label">לאן אפשר ללכת</div><div class='lvl'><span class='muted'>למעלה</span><span class='nums'>65,139</span></div>
+<div class='lvl'><span class='muted'>למעלה</span><span class='nums'>65,033</span></div>
+<div class='lvl'><span class='muted'>למעלה</span><span class='nums'>64,997</span></div>
+<div class='lvl'><span class='muted'>למעלה</span><span class='nums'>64,827</span></div>
+<div class='now'>עכשיו 64,671</div>
+<div class='lvl'><span class='muted'>למטה</span><span class='nums'>64,600</span></div>
+<div class='lvl'><span class='muted'>למטה</span><span class='nums'>64,507</span></div>
+<div class='lvl'><span class='muted'>למטה</span><span class='nums'>64,414</span></div>
+<div class='lvl'><span class='muted'>למטה</span><span class='nums'>64,294</span></div>
+</div>
+    <div class="card"><div class="label">מה השתנה</div><div class="muted">המחיר עלה מ-64,414 (נמוך מינימום) ל-64,670 בעלייה חדה. ה-30m הפך ל-GREEN עם HH בבועה. אבל ה-2H עדיין RED בערוץ ירידה, מה שמעיד על bounce בתוך downtrend גדול יותר.</div></div>
+    <div class="muted" style="text-align:center">דמו. לא ייעוץ השקעות.</div>
+  </div>
+</body>
+</html>

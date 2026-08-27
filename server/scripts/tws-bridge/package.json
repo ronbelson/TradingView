@@ -1,0 +1,10 @@
+{
+  "name": "tws-bridge-mbt",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only MBT quote bridge: local TWS → BTC CHEF (/api/tws/quote)",
+  "dependencies": {
+    "@stoqey/ib": "^1.5.1"
+  }
+}

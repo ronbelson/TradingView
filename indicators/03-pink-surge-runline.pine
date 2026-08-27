@@ -1,0 +1,372 @@
+//@version=6
+indicator("Pink Surge Runline", overlay=true)
+
+sourceOpt = input.string("Close", "Source", options=["Close", "Open", "High", "Low", "HL2", "High/Low Range"])
+src = sourceOpt == "Open" ? open : sourceOpt == "High" ? high : sourceOpt == "Low" ? low : sourceOpt == "HL2" ? hl2 : sourceOpt == "High/Low Range" ? hl2 : close
+daySess = input.session("1600-1600", "After-hours → Regular (Exchange TZ)")
+investment = input.float(3000.0, "Investment ($)", minval=0)
+dayPctThreshold = input.float(7.0, "Day % Threshold", minval=0, maxval=30, step=0.5)
+fastLen = input.int(20, "SMA Fast Length", minval=1)
+midLen = input.int(50, "SMA Mid Length", minval=1)
+slowLen = input.int(100, "SMA Slow Length", minval=1)
+macdFast = input.int(12, "MACD Fast Length", minval=1)
+macdSlow = input.int(26, "MACD Slow Length", minval=1)
+macdSignal = input.int(9, "MACD Signal Length", minval=1)
+preSess = input.session("0400-0930", "Premarket (Exchange TZ)")
+regSess = input.session("0930-1600", "Regular (Exchange TZ)")
+afterSess = input.session("1600-2000", "After-hours (Exchange TZ)")
+maLen = input.int(200, "SMA Length", minval=1)
+sma200Len = input.int(200, "SMA 200 Length", minval=1)
+showPriceTable = input.bool(true, "Show Price Table")
+showPnlTable = input.bool(false, "Show P/L Table")
+fillRunlineSma200 = input.bool(true, "Fill Runline-SMA200")
+fillMaxDistPct = input.float(5.0, "Fill Max Dist %", minval=0.1, step=0.1)
+fillOpacity = input.int(80, "Fill Opacity (0-100)", minval=0, maxval=100)
+fillNeutralThresholdPct = input.float(0.3, "Fill Neutral Threshold %", minval=0.0, step=0.1)
+fillAboveStartColor = input.color(color.lime, "Fill Above Start Color")
+fillAboveEndColor = input.color(color.green, "Fill Above End Color")
+fillBelowStartColor = input.color(color.red, "Fill Below Start Color")
+fillBelowEndColor = input.color(color.maroon, "Fill Below End Color")
+fillNeutralColor = input.color(color.gray, "Fill Neutral Color")
+channelLen = input.int(33, "Channel SMMA Length", minval=1)
+priceAvgLen = input.int(5, "Price Average Length", minval=1)
+channelHighColor = input.color(color.white, "Channel High Color")
+channelLowColor = input.color(color.yellow, "Channel Low Color")
+showTrendLines = input.bool(true, "Show Trend Lines")
+trendSourceOpt = input.string("High/Low", "Trend Line Source", options=["High/Low", "Close", "Open"])
+pivotLen = input.int(5, "Pivot Length", minval=1, maxval=50)
+extendTrendLines = input.bool(true, "Extend Trend Lines")
+showTrendStateTable = input.bool(true, "Show Trend State")
+showTrendStateOverlay = input.bool(true, "Show Trend State Overlay")
+overlayLookback = input.int(100, "Overlay Lookback Bars", minval=10, maxval=500)
+overlayPaddingAtr = input.float(2.0, "Overlay Padding (ATR)", minval=0)
+trendHighColor = input.color(color.white, "Trend High Line Color")
+trendLowColor = input.color(color.yellow, "Trend Low Line Color")
+showHelpText = input.bool(false, "Show Help Text")
+showTrendMeter = input.bool(true, "Show Trend Meter")
+trendMeterLag = input.int(4, "Trend Meter Lag (bars)", minval=0, maxval=50)
+trendSmaDistPct = input.float(2.0, "SMA Distance % Scale", minval=0.1, maxval=20, step=0.1)
+trendSma200DistPct = input.float(3.0, "SMA 200 Distance % Scale", minval=0.1, maxval=20, step=0.1)
+trendPriceMovePct = input.float(1.0, "Price Move % Scale", minval=0.1, maxval=10, step=0.1)
+smaBearWeight = input.float(1.5, "SMA20 Bear Weight", minval=1.0, maxval=5.0, step=0.1)
+sma200BearWeight = input.float(2.0, "SMA200 Bear Weight", minval=1.0, maxval=5.0, step=0.1)
+trendVolLen = input.int(20, "Volume Avg Length", minval=1)
+trendVolWeight = input.float(1.5, "Volume Bear Weight", minval=1.0, maxval=5.0, step=0.1)
+
+fast = ta.sma(src, fastLen)
+mid = ta.sma(src, midLen)
+slow = ta.sma(src, slowLen)
+[macdLine, signalLine, _] = ta.macd(src, macdFast, macdSlow, macdSignal)
+maLine = ta.sma(src, maLen)
+smaFastLine = ta.sma(src, fastLen)
+sma200Line = ta.sma(src, sma200Len)
+smmaHigh = ta.rma(high, channelLen)
+smmaLow = ta.rma(low, channelLen)
+priceAverage = ta.rma(ohlc4, priceAvgLen)
+
+// Entry on pink, exit on gray
+var bool inTrade = false
+var float entryPrice = na
+var float lastTradePnl = na
+var float lastTradePct = na
+var float sessionPnl = 0.0
+var float sessionPct = 0.0
+var float sessionPnlUsd = 0.0
+var float entryShares = na
+var float dayOpenPrice = na
+var int entryCount = 0
+var int exitCount = 0
+var int winCount = 0
+var int lossCount = 0
+
+inSession = not na(time(timeframe.period, daySess))
+newSession = inSession and not inSession[1]
+sessionEnded = not inSession and inSession[1]
+
+inPre = not na(time(timeframe.period, preSess))
+inReg = not na(time(timeframe.period, regSess))
+inAfter = not na(time(timeframe.period, afterSess))
+marketStatus = inReg ? "Regular" : inPre ? "Premarket" : inAfter ? "After-hours" : "Closed"
+
+daySessTime = time("D", daySess)
+dayStart = ta.change(daySessTime) != 0
+
+dayPct = dayOpenPrice != 0 ? (src - dayOpenPrice) / dayOpenPrice * 100.0 : na
+meetsDayPct = dayPctThreshold == 0 ? true : dayPct >= dayPctThreshold
+isUp = fast > mid and mid > slow and fast > fast[1] and mid > mid[1] and slow > slow[1] and macdLine > signalLine and meetsDayPct
+lineColor = isUp ? color.rgb(255, 105, 180) : color.gray
+runlinePlot = plot(sourceOpt == "High/Low Range" ? na : src, "Price Runline", color=lineColor, linewidth=2)
+runlineHighPlot = plot(sourceOpt == "High/Low Range" ? high : na, "Price High", color=lineColor, linewidth=1)
+runlineLowPlot = plot(sourceOpt == "High/Low Range" ? low : na, "Price Low", color=lineColor, linewidth=1)
+smaColor = src < maLine ? color.red : color.green
+plot(maLine, "SMA", color=smaColor, linewidth=2)
+sma200Plot = plot(sma200Line, "SMA 200", color=color.new(color.blue, 0), linewidth=2)
+
+distPct200 = sma200Line != 0 ? (src - sma200Line) / sma200Line * 100.0 : na
+distIntensity = na(distPct200) ? na : math.min(math.abs(distPct200) / fillMaxDistPct, 1.0)
+aboveColor = na(distIntensity) ? fillNeutralColor : color.from_gradient(distIntensity, 0, 1, fillAboveStartColor, fillAboveEndColor)
+belowColor = na(distIntensity) ? fillNeutralColor : color.from_gradient(distIntensity, 0, 1, fillBelowStartColor, fillBelowEndColor)
+isNeutral = not na(distPct200) and math.abs(distPct200) <= fillNeutralThresholdPct
+fillColor = na(distPct200) ? fillNeutralColor : isNeutral ? fillNeutralColor : src >= sma200Line ? aboveColor : belowColor
+fill(runlinePlot, sma200Plot, color=fillRunlineSma200 ? color.new(fillColor, fillOpacity) : na)
+
+channelStateColor = priceAverage > smmaHigh ? color.green : priceAverage < smmaLow ? color.red : color.gray
+channelHighPlot = plot(smmaHigh, "Channel High (SMMA)", color=channelHighColor, linewidth=2)
+channelLowPlot = plot(smmaLow, "Channel Low (SMMA)", color=channelLowColor, linewidth=2)
+fill(channelHighPlot, channelLowPlot, color=color.new(channelStateColor, 85))
+plot(priceAverage, "Price Average (OHLC4)", color=chart.fg_color, linewidth=2)
+
+// Trend lines: connect last two pivot highs/lows
+trendHighSrc = trendSourceOpt == "High/Low" ? high : trendSourceOpt == "Close" ? close : open
+trendLowSrc = trendSourceOpt == "High/Low" ? low : trendSourceOpt == "Close" ? close : open
+pivotHigh = ta.pivothigh(trendHighSrc, pivotLen, pivotLen)
+pivotLow = ta.pivotlow(trendLowSrc, pivotLen, pivotLen)
+
+var float lastHighPrice = na
+var int lastHighIndex = na
+var float prevHighPrice = na
+var int prevHighIndex = na
+var float lastLowPrice = na
+var int lastLowIndex = na
+var float prevLowPrice = na
+var int prevLowIndex = na
+
+if not na(pivotHigh)
+    prevHighPrice := lastHighPrice
+    prevHighIndex := lastHighIndex
+    lastHighPrice := pivotHigh
+    lastHighIndex := bar_index - pivotLen
+
+if not na(pivotLow)
+    prevLowPrice := lastLowPrice
+    prevLowIndex := lastLowIndex
+    lastLowPrice := pivotLow
+    lastLowIndex := bar_index - pivotLen
+
+var line highLine = na
+var line lowLine = na
+
+if showTrendLines and not na(prevHighIndex) and not na(lastHighIndex)
+    if na(highLine)
+        highLine := line.new(prevHighIndex, prevHighPrice, lastHighIndex, lastHighPrice, color=trendHighColor, width=2, extend=extendTrendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(highLine, prevHighIndex, prevHighPrice)
+        line.set_xy2(highLine, lastHighIndex, lastHighPrice)
+        line.set_extend(highLine, extendTrendLines ? extend.right : extend.none)
+        line.set_color(highLine, trendHighColor)
+
+if showTrendLines and not na(prevLowIndex) and not na(lastLowIndex)
+    if na(lowLine)
+        lowLine := line.new(prevLowIndex, prevLowPrice, lastLowIndex, lastLowPrice, color=trendLowColor, width=2, extend=extendTrendLines ? extend.right : extend.none)
+    else
+        line.set_xy1(lowLine, prevLowIndex, prevLowPrice)
+        line.set_xy2(lowLine, lastLowIndex, lastLowPrice)
+        line.set_extend(lowLine, extendTrendLines ? extend.right : extend.none)
+        line.set_color(lowLine, trendLowColor)
+
+getLineY(_line, _x) =>
+    x1 = line.get_x1(_line)
+    y1 = line.get_y1(_line)
+    x2 = line.get_x2(_line)
+    y2 = line.get_y2(_line)
+    dx = x2 - x1
+    dx == 0 ? na : y1 + (y2 - y1) * (_x - x1) / dx
+
+highLineY = not na(highLine) ? getLineY(highLine, bar_index) : na
+lowLineY = not na(lowLine) ? getLineY(lowLine, bar_index) : na
+upperLine = na(highLineY) or na(lowLineY) ? na : math.max(highLineY, lowLineY)
+lowerLine = na(highLineY) or na(lowLineY) ? na : math.min(highLineY, lowLineY)
+
+trendAbove = not na(upperLine) and src > upperLine
+trendBelow = not na(lowerLine) and src < lowerLine
+inChannel = not trendAbove and not trendBelow and not na(upperLine) and not na(lowerLine)
+highLineUp = not na(highLine) and line.get_y2(highLine) > line.get_y1(highLine)
+highLineDown = not na(highLine) and line.get_y2(highLine) < line.get_y1(highLine)
+lowLineUp = not na(lowLine) and line.get_y2(lowLine) > line.get_y1(lowLine)
+lowLineDown = not na(lowLine) and line.get_y2(lowLine) < line.get_y1(lowLine)
+bothUp = highLineUp and lowLineUp
+bothDown = highLineDown and lowLineDown
+bullTrend = trendAbove
+bearTrend = trendBelow
+sidewaysTrend = inChannel
+sidewaysBull = inChannel and bothUp
+sidewaysBear = inChannel and bothDown
+trendLabel = bullTrend ? "BULL" : bearTrend ? "BEAR" : sidewaysBull ? "SIDEWAYS BULL" : sidewaysBear ? "SIDEWAYS BEAR" : sidewaysTrend ? "SIDEWAYS" : "-"
+trendBg = bullTrend ? color.new(color.green, 0) : bearTrend ? color.new(color.red, 0) : sidewaysTrend ? color.new(color.yellow, 0) : color.new(color.gray, 0)
+trendTextColor = bullTrend or bearTrend ? color.white : sidewaysTrend ? color.black : color.white
+
+trendScoreRunline = isUp ? 1.0 : 0.0
+priceForMeter = trendMeterLag > 0 ? nz(src[trendMeterLag], src) : src
+priceForSma = src
+priceDeltaPct = src[1] != 0 ? (src - src[1]) / src[1] * 100.0 : na
+volAvg = ta.sma(volume, trendVolLen)
+volRatio = volAvg != 0 ? volume / volAvg : na
+clamp01(_v) =>
+    math.min(math.max(_v, 0.0), 1.0)
+
+smaDistPct = smaFastLine != 0 ? (priceForSma - smaFastLine) / smaFastLine * 100.0 : na
+smaDistFactor = na(smaDistPct) ? na : smaDistPct / trendSmaDistPct
+smaDistFactorAdj = not na(smaDistFactor) and smaDistFactor < 0 ? smaDistFactor * smaBearWeight : smaDistFactor
+trendScoreSma = na(smaDistFactorAdj) ? 0.5 : clamp01(0.5 + 0.5 * smaDistFactorAdj)
+trendScoreChannel = priceForMeter > smmaHigh ? 1.0 : priceForMeter < smmaLow ? 0.0 : 0.5
+sma200DistPct = sma200Line != 0 ? (priceForSma - sma200Line) / sma200Line * 100.0 : na
+sma200DistFactor = na(sma200DistPct) ? na : sma200DistPct / trendSma200DistPct
+sma200DistFactorAdj = not na(sma200DistFactor) and sma200DistFactor < 0 ? sma200DistFactor * sma200BearWeight : sma200DistFactor
+trendScoreSma200 = na(sma200DistFactorAdj) ? 0.5 : clamp01(0.5 + 0.5 * sma200DistFactorAdj)
+trendScorePriceMove = na(priceDeltaPct) ? 0.5 : clamp01(0.5 + 0.5 * (priceDeltaPct / trendPriceMovePct))
+volFactor = na(volRatio) ? na : (close >= open ? volRatio : -volRatio * trendVolWeight)
+trendScoreVolume = na(volFactor) ? 0.5 : clamp01(0.5 + 0.5 * volFactor)
+trendScoreTrendLine = na(upperLine) or na(lowerLine) ? na : priceForMeter > upperLine ? 1.0 : priceForMeter < lowerLine ? 0.0 : 0.5
+
+scoreSum = trendScoreRunline + trendScoreSma + trendScoreChannel + trendScoreSma200 + trendScorePriceMove + trendScoreVolume + (na(trendScoreTrendLine) ? 0.0 : trendScoreTrendLine)
+scoreCount = 6 + (na(trendScoreTrendLine) ? 0 : 1)
+trendPercent = scoreCount > 0 ? math.round(scoreSum / scoreCount * 100.0) : na
+meterIsBull = not na(trendPercent) and (bullTrend or sidewaysBull)
+meterIsBear = not na(trendPercent) and (bearTrend or sidewaysBear)
+meterStrength = na(trendPercent) ? na : meterIsBull ? trendPercent : meterIsBear ? 100 - trendPercent : trendPercent
+trendMeterColor = color.gray
+if not na(trendPercent)
+    if trendPercent >= 90
+        trendMeterColor := color.white
+    else if trendPercent >= 80
+        trendMeterColor := color.yellow
+    else if trendPercent >= 70
+        trendMeterColor := color.aqua
+    else if trendPercent >= 60
+        trendMeterColor := color.orange
+    else if trendPercent >= 50
+        trendMeterColor := color.purple
+    else if trendPercent >= 40
+        trendMeterColor := color.green
+    else if trendPercent >= 30
+        trendMeterColor := color.gray
+    else if trendPercent >= 20
+        trendMeterColor := color.red
+    else if trendPercent >= 10
+        trendMeterColor := color.maroon
+    else
+        trendMeterColor := color.white
+meterLabel = meterIsBull ? "BULL" : meterIsBear ? "BEAR" : "SIDEWAYS"
+trendMeterText = na(trendPercent) ? "-" : meterLabel + " " + str.tostring(meterStrength) + "%"
+
+overlayHigh = ta.highest(high, overlayLookback)
+overlayLow = ta.lowest(low, overlayLookback)
+overlayAtr = ta.atr(14)
+
+entered = inSession and isUp and not isUp[1]
+exited = inSession and not isUp and isUp[1]
+
+if newSession
+    sessionPnl := 0.0
+    sessionPct := 0.0
+    sessionPnlUsd := 0.0
+    lastTradePnl := na
+    lastTradePct := na
+    entryCount := 0
+    exitCount := 0
+    winCount := 0
+    lossCount := 0
+    if inTrade
+        // reset entry price at session boundary
+        entryPrice := src
+
+if dayStart
+    dayOpenPrice := src
+
+if entered
+    inTrade := true
+    entryPrice := src
+    entryShares := entryPrice != 0 ? investment / entryPrice : na
+    entryCount += 1
+
+if exited and inTrade
+    lastTradePnl := src - entryPrice
+    lastTradePct := entryPrice != 0 ? (src - entryPrice) / entryPrice * 100.0 : na
+    sessionPnl += lastTradePnl
+    sessionPct += nz(lastTradePct)
+    tradePnlUsd = na(entryShares) ? 0.0 : (src - entryPrice) * entryShares
+    sessionPnlUsd += tradePnlUsd
+    inTrade := false
+    entryPrice := na
+    entryShares := na
+    exitCount += 1
+    if lastTradePnl > 0
+        winCount += 1
+    else if lastTradePnl < 0
+        lossCount += 1
+
+if sessionEnded and inTrade
+    exitPrice = src[1]
+    lastTradePnl := exitPrice - entryPrice
+    lastTradePct := entryPrice != 0 ? (exitPrice - entryPrice) / entryPrice * 100.0 : na
+    sessionPnl += lastTradePnl
+    sessionPct += nz(lastTradePct)
+    tradePnlUsd = na(entryShares) ? 0.0 : (exitPrice - entryPrice) * entryShares
+    sessionPnlUsd += tradePnlUsd
+    inTrade := false
+    entryPrice := na
+    entryShares := na
+    exitCount += 1
+    if lastTradePnl > 0
+        winCount += 1
+    else if lastTradePnl < 0
+        lossCount += 1
+
+// Table: price display (separate)
+var table priceTable = table.new(position.top_right, 3, 1, border_width=1)
+// Table: profit/loss summary
+var table pnlTable = table.new(position.top_left, 2, 7, border_width=1)
+// Table: trend state (bottom right)
+var table trendTable = table.new(position.bottom_right, 2, 1, border_width=1)
+// Table: help text (top center)
+var table helpTable = table.new(position.top_center, 1, 7, border_width=1)
+// Overlay label for trend state
+var label trendLabelOverlay = na
+if barstate.islast
+    winRate = exitCount > 0 ? (winCount / exitCount) * 100.0 : na
+    dayPctTable = dayOpenPrice != 0 ? (src - dayOpenPrice) / dayOpenPrice * 100.0 : na
+    if showPriceTable
+        table.cell(priceTable, 0, 0, str.tostring(src, "#.##"), text_color=color.white, bgcolor=color.black)
+        if showTrendMeter
+            table.cell(priceTable, 1, 0, "●", text_color=trendMeterColor, bgcolor=color.black)
+            table.cell(priceTable, 2, 0, trendMeterText, text_color=color.white, bgcolor=color.black)
+        else
+            table.clear(priceTable, 1, 0, 2, 0)
+    else
+        table.clear(priceTable, 0, 0, 2, 0)
+    if showPnlTable
+        table.cell(pnlTable, 0, 0, "Entries", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 0, str.tostring(entryCount), text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 1, "Exits", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 1, str.tostring(exitCount), text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 2, "Wins/Losses", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 2, str.tostring(winCount) + " / " + str.tostring(lossCount), text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 3, "Win %", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 3, na(winRate) ? "-" : str.tostring(winRate, "#.##") + "%", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 4, "Session %", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 4, str.tostring(sessionPct, "#.##") + "%", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 5, "Day % (16:00)", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 5, na(dayPctTable) ? "-" : str.tostring(dayPctTable, "#.##") + "%", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 0, 6, "Market", text_color=color.white, bgcolor=color.black)
+        table.cell(pnlTable, 1, 6, marketStatus, text_color=color.white, bgcolor=color.black)
+    else
+        table.clear(pnlTable, 0, 0, 1, 6)
+    if showTrendStateTable
+        table.cell(trendTable, 0, 0, "Trend", text_color=color.white, bgcolor=color.black)
+        table.cell(trendTable, 1, 0, trendLabel, text_color=color.white, bgcolor=trendBg)
+    else
+        table.clear(trendTable, 0, 0, 1, 0)
+    if showTrendStateOverlay
+        overlayY = overlayLow - overlayAtr * overlayPaddingAtr
+        label.delete(trendLabelOverlay)
+        trendLabelOverlay := label.new(bar_index, overlayY, "Trend: " + trendLabel, textcolor=trendTextColor, style=label.style_label_down, size=size.large, color=trendBg)
+    if showHelpText
+        table.cell(helpTable, 0, 0, "הסבר מהיר", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 1, "טרנד שורי = המחיר עולה", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 2, "טרנד דובי = המחיר יורד", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 3, "צידי = אין כיוון ברור", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 4, "ערוץ = שני קווים סביב המחיר", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 5, "מעל הערוץ = שורי", text_color=color.white, bgcolor=color.black)
+        table.cell(helpTable, 0, 6, "מתחת לערוץ = דובי", text_color=color.white, bgcolor=color.black)
+    else
+        table.clear(helpTable, 0, 0, 0, 6)
