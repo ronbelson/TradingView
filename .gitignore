@@ -16,3 +16,4 @@ server/.data/*.json
 !server/.data/.gitkeep
 server/scripts/tws-bridge/logs/
 server/npm-debug.log*
+server/.npm-cache/
