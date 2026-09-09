@@ -1,0 +1,42 @@
+//@version=6
+indicator(title="SMA 100 / 300", shorttitle="SMA 100/300", overlay=true, timeframe="", timeframe_gaps=true)
+
+gMa = "Moving averages"
+src = input.source(close, "Source", group=gMa)
+lenFast = input.int(100, "Fast SMA", minval=1, group=gMa)
+lenSlow = input.int(300, "Slow SMA", minval=1, group=gMa)
+lineW = input.int(2, "Line width", minval=1, maxval=4, group=gMa)
+
+colFast = input.color(color.new(#FFD54F, 0), "Fast color", group=gMa)
+colSlow = input.color(color.new(#FFD54F, 35), "Slow color", group=gMa)
+
+gBg = "Background"
+showBg = input.bool(true, "Show background", group=gBg)
+bgTransp = input.int(70, "Transparency", minval=0, maxval=100, group=gBg)
+colAbove = input.color(#26A69A, "Above 100", group=gBg)
+colMid = input.color(#9E9E9E, "Between 100 and 300", group=gBg)
+colBelow = input.color(#EF5350, "Below 300", group=gBg)
+
+smaFast = ta.sma(src, lenFast)
+smaSlow = ta.sma(src, lenSlow)
+
+upper = math.max(smaFast, smaSlow)
+lower = math.min(smaFast, smaSlow)
+
+above = src > upper
+below = src < lower
+between = not above and not below
+
+colGreen = showBg and above ? color.new(colAbove, bgTransp) : na
+colGray = showBg and between ? color.new(colMid, bgTransp) : na
+colRed = showBg and below ? color.new(colBelow, bgTransp) : na
+
+pClose = plot(src, "Close", display=display.none)
+pFast = plot(smaFast, "SMA 100", color=colFast, linewidth=lineW)
+pSlow = plot(smaSlow, "SMA 300", color=colSlow, linewidth=lineW)
+pUpper = plot(upper, "Upper", display=display.none)
+pLower = plot(lower, "Lower", display=display.none)
+
+fill(pClose, pUpper, color=colGreen, title="Above to close")
+fill(pFast, pSlow, color=colGray, title="Between 100 and 300")
+fill(pClose, pLower, color=colRed, title="Below to close")
